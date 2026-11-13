@@ -82,20 +82,21 @@ export function rentDue(building: WorldBuilding, nowMs: number): { readonly coin
   ) {
     return { coins: 0, nextCollectedAt: building.lastCollectedAt ?? nowMs };
   }
-  const cycles = passiveCycles(nowMs, building.lastCollectedAt, placeable.definition.rent.seconds);
+  const cycleSeconds = placeable.definition.rent.seconds;
+  const cycles = passiveCycles(nowMs, building.lastCollectedAt, cycleSeconds);
   const coins = Math.floor(
     rentCollectible({
       now: Math.floor(nowMs / 1000),
       lastCollectedAt: Math.floor(building.lastCollectedAt / 1000),
-      cycleSeconds: placeable.definition.rent.seconds,
+      cycleSeconds,
       baseRent: placeable.definition.rent.coins,
       level: building.level,
     }),
   );
-  return {
-    coins,
-    nextCollectedAt: building.lastCollectedAt + cycles * placeable.definition.rent.seconds * 1000,
-  };
+  const elapsedSeconds = Math.floor(nowMs / 1000) - Math.floor(building.lastCollectedAt / 1000);
+  const nextCollectedAt =
+    elapsedSeconds > PASSIVE_CAP_SECONDS ? nowMs : building.lastCollectedAt + cycles * cycleSeconds * 1000;
+  return { coins, nextCollectedAt };
 }
 
 function settleConstruction(building: WorldBuilding, now: number): boolean {

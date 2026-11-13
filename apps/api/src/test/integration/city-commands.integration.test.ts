@@ -490,6 +490,28 @@ test("snapshot sinceVersion returns a delta inside the retention window and a fu
   await assertLedgerReconciled(session.cityId);
 });
 
+test("a second collect drops rent past the twelve hour cap", async () => {
+  const session = await guest();
+  const placed = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+  const cottageId = readString(asRecord(commandSuccessSchema.parse(placed.json()).result).instanceId);
+  advance(13 * 60 * 60 * 1000);
+  const first = await command(session, "collect", { instanceId: cottageId });
+  expect(first.statusCode, JSON.stringify(first.json())).toBe(200);
+  expect(commandSuccessSchema.parse(first.json()).result).toMatchObject({ coins: 90 * 32 });
+  expect((await cityRow(session.cityId)).coins).toBe(750 + 90 * 32);
+  const second = await command(session, "collect", { instanceId: cottageId });
+  expect(second.statusCode, JSON.stringify(second.json())).toBe(200);
+  expect(commandSuccessSchema.parse(second.json()).result).toMatchObject({ coins: 0 });
+  expect((await cityRow(session.cityId)).coins).toBe(750 + 90 * 32);
+  const rent = await handle.pool.query<{ rows: string; total: string }>(
+    "select count(*)::text as rows, coalesce(sum(delta), 0)::text as total from inventory_ledger where city_id = $1 and source = 'rent_collected'",
+    [session.cityId],
+  );
+  expect(rent.rows[0]).toEqual({ rows: "1", total: String(90 * 32) });
+  await assertLedgerReconciled(session.cityId);
+});
+
 function advance(milliseconds: number): void {
   now = new Date(now.getTime() + milliseconds);
 }

@@ -234,6 +234,158 @@ test("lazy timers finish construction, hold a ripe plot, and cap rent and sales 
   expect(sales.buildings[0]?.cycleStartedAt).toBeNull();
 });
 
+test("rent past twelve hours is paid once and the overflow is dropped", () => {
+  const capCoins = 90 * 32;
+  for (const awayHours of [13, 24, 48]) {
+    const cottage = building({
+      id: "home",
+      definitionId: "B-001",
+      x: 12,
+      y: 12,
+      state: "ACTIVE",
+      lastCollectedAt: NOW - awayHours * 60 * 60 * 1000,
+    });
+    const first = planCollect(withBuilding(grassWorld(), cottage), { instanceId: "home" });
+    expect(first.ok).toBe(true);
+    if (!first.ok) {
+      return;
+    }
+    expect(first.result).toMatchObject({ coins: capCoins });
+    expect(first.buildings[0]?.lastCollectedAt).toBe(NOW);
+    const settled = withBuilding(grassWorld(), first.buildings[0]);
+    const second = planCollect(settled, { instanceId: "home" });
+    expect(second.ok).toBe(true);
+    if (!second.ok) {
+      return;
+    }
+    expect(second.result).toMatchObject({ coins: 0 });
+    expect(second.ledger).toEqual([]);
+  }
+
+  const partial = building({
+    id: "home",
+    definitionId: "B-001",
+    x: 12,
+    y: 12,
+    state: "ACTIVE",
+    lastCollectedAt: NOW - 480_000 - 100_000,
+  });
+  const kept = planCollect(withBuilding(grassWorld(), partial), { instanceId: "home" });
+  expect(kept.ok).toBe(true);
+  if (!kept.ok) {
+    return;
+  }
+  expect(kept.result).toMatchObject({ coins: 32 });
+  expect(kept.buildings[0]?.lastCollectedAt).toBe(NOW - 100_000);
+  const later = planCollect({ ...withBuilding(grassWorld(), kept.buildings[0]), now: NOW + 380_000 }, { instanceId: "home" });
+  expect(later.ok).toBe(true);
+  if (!later.ok) {
+    return;
+  }
+  expect(later.result).toMatchObject({ coins: 32 });
+});
+
+test("ledger guards refuse a second payout", () => {
+  const placed = planPlace(grassWorld(), { definitionId: "B-001", x: 12, y: 12, rotation: 0 }, IDS);
+  expect(placed.ok).toBe(true);
+  if (!placed.ok) {
+    return;
+  }
+  const cottage = must(placed.buildings[0], "cottage");
+  const removed = planRemove(withBuilding(grassWorld(), cottage), { instanceId: cottage.id });
+  expect(removed.ok).toBe(true);
+  if (!removed.ok) {
+    return;
+  }
+  expect(removed.result).toMatchObject({ refund: 0 });
+  expect(removed.ledger.filter((entry) => entry.resource === "COINS")).toEqual([]);
+  const again = planRemove(withBuilding(grassWorld(), removed.buildings[0]), { instanceId: cottage.id });
+  expect(again).toMatchObject({ ok: false, code: "STATE_CHANGED" });
+
+  const paid = planPlace(grassWorld(), { definitionId: "AG-001", x: 18, y: 18, rotation: 0 }, { ...IDS, instanceId: "44444444-4444-4444-8444-444444444444" });
+  expect(paid.ok).toBe(true);
+  if (!paid.ok) {
+    return;
+  }
+  const plot = must(paid.buildings[0], "wheat");
+  const seeded = withBuilding(grassWorld(), plot);
+  const sold = planRemove(seeded, { instanceId: plot.id });
+  expect(sold.ok).toBe(true);
+  if (!sold.ok) {
+    return;
+  }
+  const broke = planRemove(
+    { ...withBuilding(seeded, sold.buildings[0]), city: { ...seeded.city, coins: 9 }, now: NOW + 1_000 },
+    { instanceId: plot.id, undo: true },
+  );
+  expect(broke).toMatchObject({ ok: false, code: "INSUFFICIENT_COINS" });
+
+  const hidden = {
+    ...building({
+      id: "home",
+      definitionId: "B-001",
+      x: 12,
+      y: 12,
+      state: "ACTIVE",
+      lastCollectedAt: NOW - 2 * 24 * 60 * 60 * 1000,
+      outputReady: { goodId: "GOOD_BREAD", qty: 3 },
+    }),
+    removedAt: NOW - 1_000,
+    undoExpiresAt: NOW + 9_000,
+  };
+  const skipped = planCollect(withBuilding(grassWorld(), hidden), {});
+  expect(skipped.ok).toBe(true);
+  if (!skipped.ok) {
+    return;
+  }
+  expect(skipped.ledger.filter((entry) => entry.resource === "COINS" || entry.resource === "GOOD_BREAD")).toEqual([]);
+
+  const bakery = building({ id: "bakery", definitionId: "B-007", x: 12, y: 12, state: "ACTIVE" });
+  const producing = { ...withBuilding(grassWorld(), bakery), balances: { GOOD_WHEAT: 10 } };
+  const first = planStartProduction(producing, { instanceId: "bakery", recipeId: "RCP-BREAD" }, IDS);
+  expect(first.ok).toBe(true);
+  if (!first.ok) {
+    return;
+  }
+  const second = planStartProduction(
+    withJob(producing, first.jobs[0]),
+    { instanceId: "bakery", recipeId: "RCP-BREAD" },
+    { ...IDS, jobId: "55555555-5555-4555-8555-555555555555" },
+  );
+  expect(second.ok).toBe(true);
+  if (!second.ok) {
+    return;
+  }
+  const third = planStartProduction(
+    withJobs(producing, [first.jobs[0], second.jobs[0]]),
+    { instanceId: "bakery", recipeId: "RCP-BREAD" },
+    { ...IDS, jobId: "66666666-6666-4666-8666-666666666666" },
+  );
+  expect(third).toMatchObject({ ok: false, code: "STATE_CHANGED" });
+  const finished = must(first.jobs[0], "finished job");
+  const cancelled = planCancelProduction(withJob(producing, { ...finished, movedToOutputAt: NOW }), {
+    instanceId: "bakery",
+    jobId: finished.id,
+  });
+  expect(cancelled).toMatchObject({ ok: false, code: "STATE_CHANGED" });
+
+  const grocery = building({
+    id: "grocery",
+    definitionId: "B-004",
+    x: 16,
+    y: 16,
+    state: "NEEDS_SUPPLY",
+    stock: { goods: { GOOD_WHEAT: 7 }, pendingCoins: 0, tutorialCycle: false, tutorialUsed: true },
+  });
+  const supplied = planSupply({ ...withBuilding(grassWorld(), grocery), balances: { GOOD_BREAD: 30 } }, { instanceId: "grocery" });
+  expect(supplied.ok).toBe(true);
+  if (!supplied.ok) {
+    return;
+  }
+  expect(supplied.ledger).toEqual([expect.objectContaining({ resource: "GOOD_BREAD", delta: -2, source: "business_supplied" })]);
+  expect(supplied.buildings[0]?.stock.goods).toMatchObject({ GOOD_WHEAT: 7, GOOD_BREAD: 2 });
+});
+
 test("collect keeps leftover output when the warehouse is full and prefers quest goods", () => {
   const wheatReady = building({
     id: "wheat",
