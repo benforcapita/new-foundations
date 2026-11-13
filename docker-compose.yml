@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nf
+      POSTGRES_PASSWORD: nf
+      POSTGRES_DB: new_foundations
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nf -d new_foundations"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - nf-pg:/var/lib/postgresql/data
+
+volumes:
+  nf-pg:
