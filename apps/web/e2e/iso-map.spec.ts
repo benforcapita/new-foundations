@@ -272,7 +272,7 @@ test("state overlays collapse to status dots below zoom 0.9", async ({ page }) =
   const labels = [
     { id: "cottage-build", x: 1, y: 1, opaqueRow: 199 },
     { id: "grocery", x: 9, y: 6, opaqueRow: 199 },
-    { id: "bakery", x: 9, y: 9, opaqueRow: 41 },
+    { id: "bakery", x: 9, y: 9, opaqueRow: 199 },
     { id: "cottage-ready", x: 12, y: 12, opaqueRow: 199 },
   ];
   for (const label of labels) {
@@ -325,4 +325,78 @@ test.describe("reduced motion", () => {
     await page.waitForTimeout(400);
     await expect(page.getByTestId("crop-offset")).toHaveText("0");
   });
+});
+
+test("building label rectangles do not cover other buildings' opaque texels", async ({ page }) => {
+  await openCity(page);
+  const buildings = [
+    { id: "cottage-build", asset: "bld_res_cottage", x: 1, y: 1, size: 2 },
+    { id: "town-hall", asset: "bld_civic_townhall", x: 4, y: 4, size: 4 },
+    { id: "grocery", asset: "bld_com_grocery", x: 9, y: 6, size: 2 },
+    { id: "bakery", asset: "bld_prod_bakery", x: 9, y: 9, size: 2 },
+    { id: "cottage-ready", asset: "bld_res_cottage", x: 12, y: 12, size: 2 },
+  ].map((building) => ({ ...building, anchor: gridToScreen(building.x + building.size, building.y + building.size, MAP_ORIGIN_X, MAP_ORIGIN_Y) }));
+
+  for (const building of buildings.filter((item) => item.id !== "town-hall")) {
+    const center = { x: building.anchor.x, y: building.anchor.y - 150 };
+    await aimWorld(page, center.x, center.y, 1);
+    const overlaps = await page.evaluate(async ({ building, buildings, center }) => {
+      const canvas = document.querySelector("canvas");
+      if (!(canvas instanceof HTMLCanvasElement)) throw new Error("canvas missing");
+      const context = canvas.getContext("2d");
+      if (context === null) throw new Error("canvas context missing");
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const cream = (x: number, y: number): boolean => {
+        const i = (y * canvas.width + x) * 4;
+        return pixels[i] === 244 && pixels[i + 1] === 241 && pixels[i + 2] === 234;
+      };
+      const left = Math.round(canvas.width / 2);
+      const scanX = left + 1;
+      const runs: { top: number; bottom: number }[] = [];
+      for (let y = Math.round(canvas.height / 2 - 110); y < Math.round(canvas.height / 2 + 100); y += 1) {
+        if (!cream(scanX, y)) continue;
+        const top = y;
+        while (cream(scanX, y + 1)) y += 1;
+        if (y - top >= 10) runs.push({ top, bottom: y + 1 });
+      }
+      if (runs.length !== 1) throw new Error(`${building.id}: expected one label, found ${runs.length}`);
+      const run = runs[0];
+      if (run === undefined) throw new Error("label missing");
+      let right = left;
+      while (cream(right, run.top + 1)) right += 1;
+      if (right - left < 10) throw new Error(`${building.id}: label width missing`);
+      const result: string[] = [];
+      for (const other of buildings.filter((item) => item.id !== building.id)) {
+        const resource = performance.getEntriesByType("resource").find((entry) => entry.name.includes(other.asset));
+        if (resource === undefined) throw new Error(`asset missing: ${other.asset}`);
+        const image = new Image();
+        image.src = resource.name;
+        await image.decode();
+        const mask = document.createElement("canvas");
+        mask.width = image.width;
+        mask.height = image.height;
+        const maskContext = mask.getContext("2d");
+        if (maskContext === null) throw new Error("mask context missing");
+        maskContext.drawImage(image, 0, 0);
+        const alpha = maskContext.getImageData(0, 0, image.width, image.height).data;
+        for (let y = run.top; y < run.bottom; y += 1) {
+          for (let x = left; x < right; x += 1) {
+            const worldX = center.x + x - canvas.width / 2;
+            const worldY = center.y + y - canvas.height / 2;
+            const display = other.size * 128;
+            const sourceX = Math.floor((worldX - (other.anchor.x - display / 2)) * image.width / display);
+            const sourceY = Math.floor((worldY - (other.anchor.y - display)) * image.height / display);
+            if (sourceX >= 0 && sourceX < image.width && sourceY >= 0 && sourceY < image.height &&
+                (alpha[(sourceY * image.width + sourceX) * 4 + 3] ?? 0) > 16) {
+              result.push(`${building.id} covers ${other.id}`);
+              break;
+            }
+          }
+          if (result.at(-1) === `${building.id} covers ${other.id}`) break;
+        }
+      }
+      return result;
+    }, { building, buildings, center });
+    expect(overlaps).toEqual([]);
+  }
 });

@@ -26,7 +26,7 @@ import { MAP_ORIGIN_X, MAP_ORIGIN_Y, anchorScreen, cellCenter, diamondPoints, di
 import { overlayColor, overlayForState } from "./overlays";
 import { plotPresentation } from "./plots";
 import { IDLE_GHOST, usePlacementStore, useSceneStore, type OverlayReadout } from "./scene-store";
-import { firstOpaqueRow, visibleArtTop } from "./spriteArt";
+import { firstOpaqueRow, labelTopRow, visibleArtTop } from "./spriteArt";
 
 type Badge = {
   readonly id: string;
@@ -522,7 +522,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private artTop(image: Phaser.GameObjects.Image): number {
-    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, this.opaqueRow(image.texture.key));
+    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, labelTopRow(image.texture.key, this.opaqueRow(image.texture.key)));
   }
 
   private opaqueRow(key: string): number {

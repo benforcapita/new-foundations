@@ -30,3 +30,12 @@ export function visibleArtTop(
   }
   return frameTop + displayHeight * (opaqueRow / sourceHeight);
 }
+
+/** Source-image row used to position building labels, when foreground details extend above the roof. */
+const LABEL_TOP: Readonly<Record<string, number>> = {
+  bld_prod_bakery: 199,
+};
+
+export function labelTopRow(assetId: string, firstRow: number): number {
+  return LABEL_TOP[assetId] ?? firstRow;
+}
