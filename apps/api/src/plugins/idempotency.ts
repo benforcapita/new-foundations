@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import { CONTENT_VERSION } from "@nf/shared";
+import { commandSuccessSchema, type CommandSuccess } from "@nf/shared/schemas";
 import type { Database } from "../db/client";
 import {
   cities,
@@ -11,6 +12,7 @@ import {
 } from "../db/schema";
 import { ApiError } from "../errors";
 import { orderedCityIds } from "../commands/orderedCityIds";
+import { presentCityHeader, presentDelta, presentInventory } from "../modules/present";
 
 export type LedgerWrite = {
   readonly goodId: string;
@@ -21,11 +23,12 @@ export type LedgerWrite = {
 export type CommandEffects = {
   readonly ledger: readonly LedgerWrite[];
   readonly telemetry?: { readonly name: string; readonly payload: Record<string, unknown> };
+  readonly result?: unknown;
 };
 
 export type CommandOutcome = {
   readonly statusCode: number;
-  readonly body: Record<string, unknown>;
+  readonly body: CommandSuccess;
   readonly replayed: boolean;
 };
 
@@ -94,7 +97,7 @@ export async function runCommand(
         .for("update");
       const row = existing[0];
       if (row === undefined || row.statusCode === null || row.result === null) {
-        throw new ApiError(409, "IDEMPOTENCY_IN_PROGRESS", "Command is still in progress");
+        throw new ApiError(409, "STATE_CHANGED", "Command is still in progress");
       }
       if (row.requestHash !== input.requestHash) {
         throw new ApiError(
@@ -103,7 +106,7 @@ export async function runCommand(
           "Idempotency-Key was already used with a different request body",
         );
       }
-      return { statusCode: row.statusCode, body: row.result, replayed: true };
+      return { statusCode: row.statusCode, body: commandSuccessSchema.parse(row.result), replayed: true };
     }
 
     const locked = await selectCitiesForUpdate(tx.execute.bind(tx), input.cityIds);
@@ -170,20 +173,16 @@ export async function runCommand(
             .from(inventoryBalances)
             .where(and(eq(inventoryBalances.cityId, input.cityId), inArray(inventoryBalances.goodId, touched)));
 
-    const body: Record<string, unknown> = {
+    const body = commandSuccessSchema.parse({
+      result: effects.result ?? {},
+      delta: presentDelta({
+        fromVersion: city.version,
+        toVersion: versionAfter,
+        inventory: presentInventory(balances),
+        ...(stale ? { city: presentCityHeader(city, versionAfter) } : {}),
+      }),
       cityVersion: versionAfter,
-      contentVersion: CONTENT_VERSION,
-      delta: {
-        cityId: input.cityId,
-        baseVersion: input.fromVersion ?? city.version,
-        version: versionAfter,
-        header: { version: versionAfter },
-        upserts: {
-          inventory: balances.map((balance) => ({ goodId: balance.goodId, qty: balance.qty })),
-        },
-        removals: {},
-      },
-    };
+    });
 
     await tx
       .update(commandDedup)

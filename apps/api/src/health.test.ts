@@ -24,7 +24,7 @@ test("GET /healthz reports the database down when the app has no pool", async ()
   try {
     const response = await app.inject({ method: "GET", url: "/healthz" });
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toEqual({ ok: false, db: "down", version: CONTENT_VERSION });
+    expect(response.json()).toEqual({ ok: false, db: "down", version: String(CONTENT_VERSION) });
   } finally {
     await app.close();
   }

@@ -246,7 +246,7 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
       questId: "quest_tutorial_house",
       status: "ACTIVE",
       stepIndex: 0,
-      stepState: { step: "place_house" },
+      stepState: { "0": 0 },
       version: 0,
     },
     {
@@ -254,7 +254,7 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
       questId: "quest_early_bakery_01",
       status: "ACTIVE",
       stepIndex: 0,
-      stepState: { progress: [0, 0] },
+      stepState: { "0": 0, "1": 0 },
       version: 0,
     },
     {
@@ -262,7 +262,7 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
       questId: "quest_flower_street",
       status: "ACTIVE",
       stepIndex: 0,
-      stepState: { progress: [0] },
+      stepState: { "0": 0 },
       version: 0,
     },
   ]);

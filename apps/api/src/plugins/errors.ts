@@ -11,10 +11,30 @@ export function registerErrors(app: FastifyInstance): void {
     if (statusCode >= 500) {
       request.log.error(error);
     }
-    const code = statusCode === 404 ? "NOT_FOUND" : statusCode === 400 ? "VALIDATION" : "INTERNAL";
+    const code = codeForStatus(statusCode);
     const message = statusCode < 500 && error instanceof Error ? error.message : "Internal server error";
-    void reply.status(statusCode).send({ error: { code, message } });
+    void reply.status(statusCode).send(apiErrorBody(new ApiError(statusCode, code, message)));
   });
+}
+
+function codeForStatus(statusCode: number): "VALIDATION" | "UNAUTHORIZED" | "NOT_FOUND" | "STATE_CHANGED" | "CONTENT_VERSION_MISMATCH" | "RATE_LIMITED" {
+  switch (statusCode) {
+    case 401:
+      return "UNAUTHORIZED";
+    case 404:
+      return "NOT_FOUND";
+    case 409:
+      return "STATE_CHANGED";
+    case 412:
+      return "CONTENT_VERSION_MISMATCH";
+    case 429:
+      return "RATE_LIMITED";
+    case 400:
+    case 422:
+      return "VALIDATION";
+    default:
+      return "STATE_CHANGED";
+  }
 }
 
 function readStatusCode(error: unknown): number {

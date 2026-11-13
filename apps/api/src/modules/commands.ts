@@ -1,5 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { readCityVersion, readIdempotencyKey } from "../commands/headers";
+import { CONTENT_VERSION } from "@nf/shared";
+import { readCityVersion, readContentVersion, readIdempotencyKey } from "../commands/headers";
 import type { Database } from "../db/client";
 import { ApiError } from "../errors";
 import { runCommand } from "../plugins/idempotency";
@@ -32,6 +33,10 @@ export async function acknowledgeCommand(
   if (raw === undefined) {
     throw new ApiError(400, "VALIDATION", "Request body must be JSON");
   }
+  const contentVersion = readContentVersion(request.headers["x-content-version"]);
+  if (contentVersion !== null && contentVersion !== CONTENT_VERSION) {
+    throw new ApiError(412, "CONTENT_VERSION_MISMATCH", "Content version does not match the server catalog");
+  }
   const fromVersion = readCityVersion(request.headers["x-city-version"]);
   const outcome = await runCommand(db, {
     actorId: actor.userId,
@@ -47,12 +52,10 @@ export async function acknowledgeCommand(
       Promise.resolve({
         ledger: [{ goodId: "GOOD_BREAD", delta: 0, source: "acknowledge" }],
         telemetry: { name: "command_acknowledged", payload: { note } },
+        result: fromVersion === null ? { note } : { note, requestedCityVersion: fromVersion },
       }),
   });
-  const version = outcome.body.cityVersion;
-  if (typeof version === "number") {
-    reply.header("X-City-Version", String(version));
-  }
+  reply.header("X-City-Version", String(outcome.body.cityVersion));
   if (outcome.replayed) {
     reply.header("Idempotent-Replay", "true");
   }

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { CONTENT_VERSION } from "@nf/shared";
+import { apiErrorSchema, catalogResponseSchema, commandSuccessSchema, healthResponseSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
 import { lockCityIds } from "../../plugins/idempotency";
 import { createDatabase, type DatabaseHandle } from "../../db/client";
@@ -39,7 +40,7 @@ test("health, catalog, and CORS headers", async () => {
     headers: { origin: "http://localhost:5173" },
   });
   expect(health.statusCode).toBe(200);
-  expect(health.json()).toEqual({ ok: true, db: "up", version: CONTENT_VERSION });
+  expect(healthResponseSchema.parse(health.json())).toEqual({ ok: true, db: "up", version: String(CONTENT_VERSION) });
   expect(health.headers["access-control-allow-origin"]).toBe("http://localhost:5173");
 
   const preview = await app.inject({
@@ -68,7 +69,11 @@ test("health, catalog, and CORS headers", async () => {
   const catalog = await app.inject({ method: "GET", url: "/v1/content/catalog?version=1" });
   expect(catalog.statusCode).toBe(200);
   expect(catalog.headers["cache-control"]).toBe("public, max-age=3600");
-  expect(catalog.json()).toMatchObject({ contentVersion: CONTENT_VERSION, levelCount: 15 });
+  const catalogBody = catalogResponseSchema.parse(catalog.json());
+  expect(catalogBody.contentVersion).toBe(CONTENT_VERSION);
+  expect(catalogBody.catalog).toMatchObject({ levels: expect.any(Array) });
+  const levels = asRecord(catalogBody.catalog).levels;
+  expect(Array.isArray(levels) ? levels : []).toHaveLength(15);
   const etag = catalog.headers.etag;
   expect(etag).toBe(`"content-${CONTENT_VERSION}"`);
   const cached = await app.inject({
@@ -125,44 +130,64 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
     headers: { authorization: `Bearer ${token}` },
   });
   expect(current.statusCode).toBe(200);
-  const snapshot = asRecord(current.json());
+  const snapshot = snapshotSchema.parse(current.json());
   expect(snapshot.city).toMatchObject({
-    id: cityId,
+    cityId,
     coins: 750,
     warehouseCap: 40,
     warehouseTier: 0,
     level: 1,
-    tutorialState: { step: "place_house", guideNpcId: "NPC-MIA" },
+    collectPriority: "QUEST_FIRST",
+    contentVersion: CONTENT_VERSION,
   });
-  expect(snapshot.inventory).toEqual([{ goodId: "GOOD_BREAD", qty: 3 }]);
+  expect(snapshot.inventory).toEqual({ GOOD_BREAD: 3 });
   expect(snapshot.cells).toHaveLength(24 * 24);
   expect(snapshot.train).toBeNull();
   expect(snapshot.contentVersion).toBe(CONTENT_VERSION);
   expect(snapshot.cityVersion).toBe(0);
-  expect(typeof snapshot.serverNow).toBe("string");
+  expect(snapshot.serverNow).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
-  const buildings = asRecords(snapshot.buildings);
-  expect(buildings.find((building) => building.definitionId === "B-009")).toMatchObject({ state: "ACTIVE" });
-  expect(buildings.find((building) => building.definitionId === "B-004")).toMatchObject({ state: "NEEDS_SUPPLY" });
-  const wheat = buildings.filter((building) => building.definitionId === "AG-001");
+  const tutorial = await handle.pool.query<{ tutorial_state: { step: string; guideNpcId: string } }>(
+    "select tutorial_state from cities where id = $1",
+    [cityId],
+  );
+  expect(tutorial.rows[0]?.tutorial_state).toEqual({ step: "place_house", guideNpcId: "NPC-MIA" });
+
+  expect(snapshot.buildings.find((building) => building.definitionId === "B-009")).toMatchObject({ state: "ACTIVE" });
+  expect(snapshot.buildings.find((building) => building.definitionId === "B-004")).toMatchObject({ state: "NEEDS_SUPPLY" });
+  const wheat = snapshot.buildings.filter((building) => building.definitionId === "AG-001");
   expect(wheat).toHaveLength(2);
   expect(wheat.every((plot) => plot.state === "READY_TO_COLLECT")).toBe(true);
-  for (const plot of wheat) {
-    expect(plot.pendingOutput).toMatchObject({ goodId: "GOOD_WHEAT", qty: 3 });
-  }
-
-  const orders = asRecords(snapshot.orders);
-  expect(orders).toHaveLength(3);
-  expect(orders.find((order) => order.slot === 0)).toMatchObject({ templateId: "ORD-T-001", status: "OPEN" });
-  const easy = orders.filter((order) => order.templateId !== "ORD-T-001");
-  expect(easy).toHaveLength(2);
-  expect(easy.every((order) => order.difficulty === "easy" && order.solvable === true && order.status === "OPEN")).toBe(
+  const wheatOutput = await handle.pool.query<{ pending_output: { goodId: string; qty: number } }>(
+    "select pending_output from building_instances where city_id = $1 and definition_id = 'AG-001'",
+    [cityId],
+  );
+  expect(wheatOutput.rows).toHaveLength(2);
+  expect(wheatOutput.rows.every((row) => row.pending_output.goodId === "GOOD_WHEAT" && row.pending_output.qty === 3)).toBe(
     true,
   );
 
-  const quests = asRecords(snapshot.quests);
-  expect(quests.map((quest) => quest.questId)).toEqual(
+  expect(snapshot.orders).toHaveLength(3);
+  expect(snapshot.orders.find((order) => order.slot === 0)).toMatchObject({
+    templateId: "ORD-T-001",
+    status: "OPEN",
+    requirements: { GOOD_BREAD: 3 },
+  });
+  const easy = snapshot.orders.filter((order) => order.templateId !== "ORD-T-001");
+  expect(easy).toHaveLength(2);
+  expect(easy.every((order) => order.difficulty === "easy" && order.status === "OPEN")).toBe(true);
+  const solvable = await handle.pool.query<{ solvable: boolean }>(
+    "select solvable from order_instances where city_id = $1 and template_id <> 'ORD-T-001'",
+    [cityId],
+  );
+  expect(solvable.rows).toHaveLength(2);
+  expect(solvable.rows.every((row) => row.solvable)).toBe(true);
+
+  expect(snapshot.quests.map((quest) => quest.questId)).toEqual(
     expect.arrayContaining(["quest_flower_street", "quest_early_bakery_01", "quest_tutorial_house"]),
+  );
+  expect(snapshot.quests.every((quest) => quest.track === "story" && quest.periodKey === "-" && quest.status === "ACTIVE")).toBe(
+    true,
   );
 
   const resumed = await app.inject({ method: "POST", url: "/v1/auth/session", payload: { token } });
@@ -197,7 +222,7 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
     payload: { type: "acknowledge", note: "missing-key" },
   });
   expect(missing.statusCode).toBe(400);
-  expect(missing.json()).toMatchObject({ error: { code: "VALIDATION" } });
+  expect(apiErrorSchema.parse(missing.json()).error.code).toBe("VALIDATION");
 
   const key = randomUUID();
   const payload = { type: "acknowledge", note: "alpha" };
@@ -214,10 +239,10 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
   });
   expect(first.statusCode).toBe(200);
   expect(first.headers["idempotent-replay"]).toBeUndefined();
-  expect(first.json()).toMatchObject({
+  expect(commandSuccessSchema.parse(first.json())).toMatchObject({
     cityVersion: 1,
-    contentVersion: CONTENT_VERSION,
-    delta: { baseVersion: 0, version: 1, cityId: session.cityId },
+    result: { note: "alpha", requestedCityVersion: 0 },
+    delta: { fromVersion: 0, toVersion: 1, inventory: { GOOD_BREAD: 3 }, removedBuildingIds: [] },
   });
 
   const replay = await app.inject({
@@ -246,7 +271,7 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
     payload: { type: "acknowledge", note: "beta" },
   });
   expect(reused.statusCode).toBe(422);
-  expect(reused.json()).toMatchObject({ error: { code: "IDEMPOTENCY_KEY_REUSED" } });
+  expect(apiErrorSchema.parse(reused.json()).error.code).toBe("IDEMPOTENCY_KEY_REUSED");
 
   const ledger = await handle.pool.query<{ total: number; rows: number }>(
     `select coalesce(sum(delta), 0)::int as total, count(*)::int as rows
@@ -268,11 +293,31 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
     payload: { type: "acknowledge", note: "stale" },
   });
   expect(mismatch.statusCode).toBe(200);
-  expect(mismatch.json()).toMatchObject({
+  const mismatchBody = commandSuccessSchema.parse(mismatch.json());
+  expect(mismatchBody).toMatchObject({
     cityVersion: 1,
-    delta: { baseVersion: 5, version: 1 },
+    result: { note: "stale", requestedCityVersion: 5 },
+    delta: { fromVersion: 0, toVersion: 1 },
   });
-  expect(mismatch.json()).not.toMatchObject({ error: { code: "VERSION_CONFLICT" } });
+  expect(mismatchBody.delta.city?.version).toBe(1);
+  expect(mismatchBody.delta.city?.cityId).toBe(mismatchGuest.cityId);
+
+  const wrongContent = await app.inject({
+    method: "POST",
+    url: "/v1/cities/current/commands/acknowledge",
+    headers: {
+      authorization: mismatchGuest.authorization,
+      "content-type": "application/json",
+      "idempotency-key": randomUUID(),
+      "x-content-version": "999",
+    },
+    payload: { type: "acknowledge", note: "old-catalog" },
+  });
+  expect(wrongContent.statusCode).toBe(412);
+  expect(apiErrorSchema.parse(wrongContent.json())).toMatchObject({
+    error: { code: "CONTENT_VERSION_MISMATCH" },
+    cityVersion: 0,
+  });
 });
 
 test("lazy resolve frees a finished production slot inside the command transaction", async () => {
@@ -342,7 +387,7 @@ test("commands are limited to 20 in a burst and 600 per minute for a session", a
       }
       if (index === 20) {
         expect(response.statusCode).toBe(429);
-        expect(response.json()).toMatchObject({ error: { code: "RATE_LIMITED" } });
+        expect(apiErrorSchema.parse(response.json()).error.code).toBe("RATE_LIMITED");
         expect(response.headers["retry-after"]).toBe("1");
         expect(response.headers["x-ratelimit-remaining"]).toBeDefined();
       }
@@ -370,13 +415,6 @@ function asRecord(value: unknown): Record<string, unknown> {
     throw new Error("expected a JSON object");
   }
   return value as Record<string, unknown>;
-}
-
-function asRecords(value: unknown): Record<string, unknown>[] {
-  if (!Array.isArray(value)) {
-    throw new Error("expected a JSON array");
-  }
-  return value.map((item) => asRecord(item));
 }
 
 function readString(value: unknown): string {

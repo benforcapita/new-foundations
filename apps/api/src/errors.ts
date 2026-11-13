@@ -1,13 +1,15 @@
+import { apiErrorSchema, type ErrorCode } from "@nf/shared/schemas";
+
 export class ApiError extends Error {
   readonly statusCode: number;
-  readonly code: string;
+  readonly code: ErrorCode;
   readonly details: unknown;
   readonly cityVersion: number | undefined;
   readonly delta: unknown;
 
   constructor(
     statusCode: number,
-    code: string,
+    code: ErrorCode,
     message: string,
     extras?: { readonly details?: unknown; readonly cityVersion?: number; readonly delta?: unknown },
   ) {
@@ -21,17 +23,14 @@ export class ApiError extends Error {
   }
 }
 
-export function apiErrorBody(error: ApiError): Record<string, unknown> {
-  const inner: Record<string, unknown> = { code: error.code, message: error.message };
-  if (error.details !== undefined) {
-    inner.details = error.details;
-  }
-  const body: Record<string, unknown> = { error: inner };
-  if (error.delta !== undefined) {
-    body.delta = error.delta;
-  }
-  if (error.cityVersion !== undefined) {
-    body.cityVersion = error.cityVersion;
-  }
-  return body;
+export function apiErrorBody(error: ApiError): { error: { code: ErrorCode; message: string; details?: unknown }; cityVersion: number } {
+  return apiErrorSchema.parse({
+    error: {
+      code: error.code,
+      message: error.message,
+      ...(error.details !== undefined ? { details: error.details } : {}),
+    },
+    ...(error.delta !== undefined ? { delta: error.delta } : {}),
+    cityVersion: error.cityVersion ?? 0,
+  });
 }

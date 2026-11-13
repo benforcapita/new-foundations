@@ -1,31 +1,31 @@
 import type { FastifyInstance } from "fastify";
 import { AGRICULTURE, BUILDINGS, CONTENT_VERSION, DECORATIONS, GOODS, LEVELS, RECIPES, ROAD } from "@nf/shared";
-import type { CatalogResponse } from "@nf/shared/schemas";
+import { catalogResponseSchema, type CatalogResponse } from "@nf/shared/schemas";
+import { ApiError } from "../errors";
 
-const CATALOG: CatalogResponse = {
+const CATALOG: CatalogResponse = catalogResponseSchema.parse({
   contentVersion: CONTENT_VERSION,
-  buildingIds: BUILDINGS.map((building) => building.id),
-  agricultureIds: AGRICULTURE.map((plot) => plot.id),
-  goodIds: GOODS.map((good) => good.id),
-  recipeIds: RECIPES.map((recipe) => recipe.id),
-  decorationIds: DECORATIONS.map((decoration) => decoration.id),
-  roadIds: [ROAD.id],
-  levelCount: LEVELS.length,
-};
+  catalog: {
+    buildings: BUILDINGS,
+    agriculture: AGRICULTURE,
+    goods: GOODS,
+    recipes: RECIPES,
+    decorations: DECORATIONS,
+    road: ROAD,
+    levels: LEVELS,
+  },
+});
 
 const ETAG = `"content-${CONTENT_VERSION}"`;
 
 export function registerCatalog(app: FastifyInstance): void {
   app.get("/v1/content/catalog", (request, reply) => {
-    reply.header("ETag", ETAG);
-    reply.header("Cache-Control", "public, max-age=3600");
     const version = request.query;
     if (isRecord(version) && version.version !== undefined && !/^[1-9]\d*$/.test(String(version.version))) {
-      reply.status(400).send({
-        error: { code: "VALIDATION", message: "version must be a positive integer" },
-      });
-      return;
+      throw new ApiError(400, "VALIDATION", "version must be a positive integer");
     }
+    reply.header("ETag", ETAG);
+    reply.header("Cache-Control", "public, max-age=3600");
     const offered = request.headers["if-none-match"];
     if (offered === ETAG) {
       reply.status(304).send();

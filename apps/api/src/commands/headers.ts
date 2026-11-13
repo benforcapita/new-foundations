@@ -20,3 +20,13 @@ export function readCityVersion(header: string | string[] | undefined): number |
   }
   return Number(header);
 }
+
+export function readContentVersion(header: string | string[] | undefined): number | null {
+  if (header === undefined || header === "") {
+    return null;
+  }
+  if (Array.isArray(header) || !/^\d+$/.test(header)) {
+    throw new ApiError(400, "VALIDATION", "X-Content-Version must be a nonnegative integer");
+  }
+  return Number(header);
+}
