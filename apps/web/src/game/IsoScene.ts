@@ -9,6 +9,7 @@ import {
   screenToGrid,
 } from "@nf/shared";
 import Phaser from "phaser";
+import { useSettings } from "../settings";
 import { bundledPngIds, resolveAssetUrl } from "./assetUrls";
 import { cropBobOffset } from "./bob";
 import { cameraAction, clampZoom, worldFromScreen, zoomFromPinch, zoomFromWheel } from "./camera";
@@ -152,6 +153,11 @@ function opaqueRowOf(texture: Phaser.Textures.Texture): number {
 
 export class IsoScene extends Phaser.Scene {
   private reducedMotion = false;
+  private demoBuilding: Phaser.GameObjects.Image | null = null;
+  private collectBuilding: Phaser.GameObjects.Image | null = null;
+  private stationBuilding: Phaser.GameObjects.Image | null = null;
+  private water: Phaser.GameObjects.Image[] = [];
+  private motionUnsubscribe: (() => void) | null = null;
   private disposed = false;
   private pointerWorld: { x: number; y: number } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
@@ -196,8 +202,12 @@ export class IsoScene extends Phaser.Scene {
   }
 
   public create(): void {
-    this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches || useSettings.getState().reducedMotion;
     this.drawTerrain();
+    const host = this.game.canvas.parentElement;
+    if (host !== null) host.dataset.fxArcs = "0";
+    this.updateWaterMotion();
+    this.motionUnsubscribe = useSettings.subscribe(() => this.syncMotion());
     this.drawRoads();
     this.drawPlots();
     this.drawBuildings();
@@ -208,6 +218,7 @@ export class IsoScene extends Phaser.Scene {
     camera.roundPixels = true;
     this.bindInput();
     this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPaint);
+    window.addEventListener("nf-fx", this.onFeedback);
     this.unsubscribe = usePlacementStore.subscribe(() => {
       this.ghostStamp = performance.now();
       this.refreshGhost();
@@ -253,7 +264,10 @@ export class IsoScene extends Phaser.Scene {
         if (terrain === undefined) {
           continue;
         }
-        placeAnchored(this, TERRAIN_ASSETS[terrain], x, y, 1, 1, GROUND_DEPTH);
+        const tile = placeAnchored(this, TERRAIN_ASSETS[terrain], x, y, 1, 1, GROUND_DEPTH);
+        if (terrain === "water") {
+          this.water.push(tile);
+        }
       }
     }
   }
@@ -327,6 +341,13 @@ export class IsoScene extends Phaser.Scene {
       const image = placeAnchored(this, definition.assetId, building.x, building.y, footprint.width, footprint.height, depth);
       image.setFlipX(spriteFlipX(building.rotation));
       this.buildingSprites.push({ id: building.instanceId, image });
+      this.demoBuilding ??= image;
+      if (building.state === "READY_TO_COLLECT") {
+        this.collectBuilding = image;
+      }
+      if (building.buildingId === "B-011") {
+        this.stationBuilding = image;
+      }
       const overlay = overlayForState(building.state, building.timerLabel);
       if (overlay === null) {
         continue;
@@ -407,9 +428,158 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private readonly onMotion = (event: MediaQueryListEvent): void => {
-    this.reducedMotion = event.matches;
-    useSceneStore.getState().publish({ reducedMotion: event.matches });
+    this.syncMotion(event.matches);
   };
+
+  private readonly onFeedback = (event: Event): void => {
+    const cue: unknown = event instanceof CustomEvent ? event.detail : null;
+    const building = this.demoBuilding;
+    if (this.reducedMotion) {
+      return;
+    }
+    if (cue === "collect") {
+      this.arcToHud(this.collectBuilding ?? building, "hud-coins", "ico_res_coin", 5, 400);
+    }
+    if (cue === "xp") {
+      this.arcToHud(this.collectBuilding ?? building, "hud-xp", "ico_res_xp", 1, 400);
+    }
+    if (cue === "train-smoke") {
+      this.emitTrainSmoke(this.stationBuilding ?? building);
+    }
+    if (building === null) {
+      return;
+    }
+    if (cue === "placement-pop") {
+      const scaleX = building.scaleX;
+      const scaleY = building.scaleY;
+      building.setScale(scaleX * 0.85, scaleY * 0.85);
+      this.tweens.add({
+        targets: building,
+        scaleX: scaleX * 1.05,
+        scaleY: scaleY * 1.05,
+        duration: 120,
+        onComplete: () => {
+          this.tweens.add({ targets: building, scaleX, scaleY, duration: 60 });
+        },
+      });
+    }
+    if (cue === "sold-out") {
+      const label = this.add
+        .text(building.x, building.y - building.displayHeight, "Needs Supply", { color: "#253d4a", backgroundColor: "#f8eedb" })
+        .setDepth(10000);
+      const icon = this.add.image(building.x - 16, label.y, "ico_ui_alert").setDisplaySize(24, 24).setDepth(10000);
+      this.tweens.add({
+        targets: [label, icon],
+        alpha: 0,
+        duration: 600,
+        onComplete: () => {
+          label.destroy();
+          icon.destroy();
+        },
+      });
+    }
+  };
+
+  private clientToWorld(client: { readonly x: number; readonly y: number }): { readonly x: number; readonly y: number } {
+    const camera = this.cameras.main;
+    const canvas = this.game.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width === 0 ? 1 : rect.width / canvas.width;
+    const scaleY = canvas.height === 0 ? 1 : rect.height / canvas.height;
+    const screenX = (client.x - rect.left) / scaleX;
+    const screenY = (client.y - rect.top) / scaleY;
+    return {
+      x: camera.scrollX + (screenX - camera.x) / camera.zoom,
+      y: camera.scrollY + (screenY - camera.y) / camera.zoom,
+    };
+  }
+
+  private hudWorld(testId: string): { readonly x: number; readonly y: number } | null {
+    const node = document.querySelector(`[data-testid="${testId}"]`);
+    if (!(node instanceof HTMLElement)) {
+      return null;
+    }
+    const box = node.getBoundingClientRect();
+    return this.clientToWorld({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
+  }
+
+  private arcToHud(
+    origin: Phaser.GameObjects.Image | null,
+    hudId: string,
+    texture: string,
+    count: number,
+    duration: number,
+  ): void {
+    const target = this.hudWorld(hudId);
+    if (origin === null || target === null) {
+      return;
+    }
+    for (let index = 0; index < count; index += 1) {
+      const startX = origin.x + (index - (count - 1) / 2) * 10;
+      const startY = origin.y;
+      const sprite = this.add.image(startX, startY, texture).setDisplaySize(24, 24).setDepth(20_000);
+      const host = this.game.canvas.parentElement;
+      if (host !== null) host.dataset.fxArcs = String(Number(host.dataset.fxArcs ?? 0) + 1);
+      const midX = (startX + target.x) / 2 + (index - (count - 1) / 2) * 16;
+      const midY = Math.min(startY, target.y) - 90;
+      const progress = { t: 0 };
+      this.tweens.add({
+        targets: progress,
+        t: 1,
+        duration,
+        ease: "Cubic.easeIn",
+        onUpdate: () => {
+          const t = progress.t;
+          sprite.setPosition(
+            (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * midX + t * t * target.x,
+            (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * midY + t * t * target.y,
+          );
+        },
+        onComplete: () => {
+          sprite.destroy();
+        },
+      });
+    }
+  }
+
+  private emitTrainSmoke(origin: Phaser.GameObjects.Image | null): void {
+    if (origin === null) {
+      return;
+    }
+    const chimneyX = origin.x;
+    const chimneyY = origin.y - origin.displayHeight * 0.7;
+    for (let index = 0; index < 6; index += 1) {
+      const puff = this.add.circle(chimneyX + index * 3, chimneyY, 6, 0x777777, 0.85).setDepth(20_000);
+      this.tweens.add({
+        targets: puff,
+        x: chimneyX + 18 + index * 6,
+        y: chimneyY - 60,
+        alpha: 0,
+        scale: 2,
+        duration: 600,
+        ease: "Sine.easeOut",
+        onComplete: () => {
+          puff.destroy();
+        },
+      });
+    }
+  }
+
+  private syncMotion(os = window.matchMedia("(prefers-reduced-motion: reduce)").matches): void {
+    this.reducedMotion = os || useSettings.getState().reducedMotion;
+    useSceneStore.getState().publish({ reducedMotion: this.reducedMotion });
+    this.updateWaterMotion();
+  }
+
+  private updateWaterMotion(): void {
+    this.tweens.killTweensOf(this.water);
+    this.water.forEach((tile) => tile.setAlpha(1));
+    if (!this.reducedMotion && this.water.length > 0) {
+      this.tweens.add({ targets: this.water, alpha: 0.9, duration: 1500, yoyo: true, repeat: -1 });
+    }
+    const host = this.game.canvas.parentElement;
+    if (host !== null) host.dataset.waterShimmer = this.tweens.getTweensOf(this.water).length > 0 ? "running" : "stopped";
+  }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
@@ -714,6 +884,7 @@ export class IsoScene extends Phaser.Scene {
       return;
     }
     this.disposed = true;
+    this.motionUnsubscribe?.();
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.unsubscribeAim?.();
@@ -726,6 +897,7 @@ export class IsoScene extends Phaser.Scene {
       host.removeEventListener("pointercancel", this.onPointerUp);
       host.removeEventListener("wheel", this.onWheel);
     }
+    window.removeEventListener("nf-fx", this.onFeedback);
     window.removeEventListener("keydown", this.onKeyDown);
     this.game.events.off(Phaser.Core.Events.POST_RENDER, this.onPaint);
     window.matchMedia("(prefers-reduced-motion: reduce)").removeEventListener("change", this.onMotion);
