@@ -1,11 +1,14 @@
-import { gridToScreen } from "@nf/shared";
+import { getFootprintAnchor, gridToScreen } from "@nf/shared";
 import { expect, test } from "vitest";
 import { MAP_ORIGIN_X, MAP_ORIGIN_Y, anchorScreen, displaySize } from "./layout";
 import { cropBobOffset } from "./bob";
 import { plotPresentation } from "./plots";
 
-test("sprites anchor on the footprint bottom vertex and scale with footprint", () => {
-  expect(anchorScreen(4, 4, 4, 4)).toEqual(gridToScreen(8, 8, MAP_ORIGIN_X, MAP_ORIGIN_Y));
+test("sprites anchor on the shared bottom vertex and scale with footprint", () => {
+  const anchor = getFootprintAnchor(4, 4, 4, 4);
+  expect(anchor).toEqual({ gx: 8, gy: 8 });
+  expect(anchorScreen(4, 4, 4, 4)).toEqual(gridToScreen(anchor.gx, anchor.gy, MAP_ORIGIN_X, MAP_ORIGIN_Y));
+  expect(getFootprintAnchor(0, 0, 4, 3)).toEqual({ gx: 4, gy: 3 });
   expect(displaySize(4, 4, 1, 1)).toEqual({ width: 512, height: 512 });
   expect(displaySize(2, 2, 0.5, 0.5)).toEqual({ width: 128, height: 64 });
   expect(displaySize(1, 1, 1, 0.5)).toEqual({ width: 128, height: 64 });

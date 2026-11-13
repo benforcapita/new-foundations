@@ -1,4 +1,4 @@
-import { ISO_TILE_WIDTH, gridToScreen } from "@nf/shared";
+import { ISO_TILE_WIDTH, getFootprintAnchor, gridToScreen } from "@nf/shared";
 
 type ScreenPoint = ReturnType<typeof gridToScreen>;
 
@@ -7,7 +7,8 @@ export const MAP_ORIGIN_X = 24 * (ISO_TILE_WIDTH / 2);
 export const MAP_ORIGIN_Y = 80;
 
 export function anchorScreen(x: number, y: number, width: number, height: number): ScreenPoint {
-  return gridToScreen(x + width, y + height, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+  const anchor = getFootprintAnchor(x, y, width, height);
+  return gridToScreen(anchor.gx, anchor.gy, MAP_ORIGIN_X, MAP_ORIGIN_Y);
 }
 
 export function footprintCenter(x: number, y: number, width: number, height: number): ScreenPoint {

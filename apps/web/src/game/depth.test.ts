@@ -1,12 +1,15 @@
+import { getBuildingDepth } from "@nf/shared";
 import { expect, test } from "vitest";
 import { GROUND_DEPTH, ROAD_DEPTH, footprintDepth, overlayDepth } from "./depth";
 
-test("depth follows (maxX + maxY) * 1000 + maxX", () => {
-  expect(footprintDepth(0, 0, 1, 1)).toBe(0);
+test("depth follows shared (maxX + maxY) * 1000 + maxX and breaks row ties", () => {
+  expect(footprintDepth(0, 0, 1, 1)).toBe(getBuildingDepth(0, 0, 1, 1));
   expect(footprintDepth(3, 4, 2, 2)).toBe(9_000 + 4);
-  expect(footprintDepth(4, 4, 4, 4)).toBe(14_000 + 7);
+  expect(footprintDepth(4, 4, 4, 4)).toBe(getBuildingDepth(4, 4, 4, 4));
   expect(footprintDepth(9, 6, 2, 2)).toBeGreaterThan(footprintDepth(4, 4, 4, 4));
-  expect(footprintDepth(1, 0, 1, 1)).toBeGreaterThan(footprintDepth(0, 0, 1, 1));
+  expect(footprintDepth(0, 4, 1, 1)).toBe(4_000);
+  expect(footprintDepth(4, 0, 1, 1)).toBe(4_004);
+  expect(footprintDepth(0, 4, 1, 1)).not.toBe(footprintDepth(4, 0, 1, 1));
 });
 
 test("ground and roads stay below every building and overlays sit half a step in front", () => {
