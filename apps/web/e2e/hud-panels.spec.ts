@@ -22,6 +22,7 @@ test("catalog, warehouse, collection and keyboard shortcut use the live city", a
 });
 
 test("selecting a plot opens its details", async ({ page }) => {
+  await page.clock.install();
   await page.goto("/");
   await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
   const plot = await page.evaluate(async () => {
@@ -67,12 +68,34 @@ test("selecting a plot opens its details", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
   await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(0);
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await page.clock.fastForward("00:02");
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
   await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  await page.getByTestId("aim-x").fill(String(destination.x));
+  await page.getByTestId("aim-y").fill(String(destination.y));
+  await page.getByTestId("aim-go").click();
+  const restoredBox = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
+  if (!restoredBox) throw new Error("Missing canvas");
+  await page.mouse.click(restoredBox.x + restoredBox.width / 2, restoredBox.y + restoredBox.height / 2);
+  await page.getByTestId("details-remove").click();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await page.clock.fastForward("00:09");
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await page.clock.fastForward(1500);
+  await expect(page.getByRole("button", { name: "Undo" })).toHaveCount(0);
 });
 
 test("HUD matches the server and shortcut respects focus, modifiers and readiness", async ({ page }) => {
+  await page.route("**/v1/cities/current", async route => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.city.xp = 7;
+    await route.fulfill({ response, json: snapshot });
+  });
   let collects = 0;
   page.on("request", request => { if (request.url().endsWith("/commands/collect-all")) collects++; });
   await page.goto("/");
@@ -98,4 +121,114 @@ test("HUD matches the server and shortcut respects focus, modifiers and readines
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
   await page.keyboard.press("c");
   expect(collects).toBe(1);
+});
+
+test("catalog separates level locks from price and places an agriculture plot", async ({ page }) => {
+  await page.route("**/v1/cities/current", async route => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.city.coins = 1000;
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  await page.getByTestId("build-catalog-open").click();
+  await expect(page.getByTestId("catalog-lock-B-011")).toContainText("level 3");
+  await expect(page.getByTestId("catalog-item-B-011").getByRole("button")).toBeDisabled();
+  await page.getByTestId("catalog-item-AG-001").getByRole("button").click();
+  const destination = gridToScreen(0.5, 6.5, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+  await page.getByTestId("aim-x").fill(String(destination.x));
+  await page.getByTestId("aim-y").fill(String(destination.y));
+  await page.getByTestId("aim-go").click();
+  const box = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
+  if (!box) throw new Error("Missing canvas");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId("ghost-cell")).toHaveText("0,6");
+  await expect(page.getByTestId("ghost-tone")).toHaveText("valid");
+  const request = page.waitForRequest(request => request.url().endsWith("/commands/place-building"));
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  expect((await request).postDataJSON()).toMatchObject({ definitionId: "AG-001", x: 0, y: 6 });
+});
+
+test("catalog disables an unlocked item when coins are insufficient", async ({ page }) => {
+  await page.route("**/v1/cities/current", async route => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    snapshot.city.coins = 0;
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  await page.getByTestId("build-catalog-open").click();
+  await expect(page.getByTestId("catalog-item-AG-001").getByRole("button")).toBeDisabled();
+  await expect(page.getByTestId("catalog-item-AG-001")).toContainText("Not enough coins");
+});
+
+test("production and supply commands roll back after rejection", async ({ page }) => {
+  let scenario: "start" | "cancel" | "supply" | "empty" = "start";
+  let buildingId = "";
+  let buildingX = 0;
+  let buildingY = 0;
+  await page.route(/\/v1\/cities\/(current|[^/]+\/snapshot)(\?.*)?$/, async route => {
+    const response = await route.fetch();
+    const snapshot = await response.json();
+    const building = snapshot.buildings.find((b: { definitionId: string }) => b.definitionId === "AG-001");
+    buildingId = building.id;
+    buildingX = building.x;
+    buildingY = building.y;
+    building.definitionId = scenario === "supply" ? "B-004" : "B-007";
+    building.state = scenario === "supply" ? "NEEDS_SUPPLY" : scenario === "cancel" ? "PRODUCING" : "ACTIVE";
+    snapshot.city.level = 1;
+    snapshot.inventory.GOOD_WHEAT = scenario === "empty" ? 0 : 10;
+    snapshot.jobs = scenario === "cancel" ? [{ id: "00000000-0000-4000-8000-000000000001", buildingId, recipeId: "RCP-BREAD", slot: 0, startedAt: snapshot.serverNow, completesAt: new Date(Date.parse(snapshot.serverNow) + 60000).toISOString(), version: 0 }] : [];
+    await route.fulfill({ response, json: snapshot });
+  });
+  await page.route("**/commands/*", route => route.fulfill({ status: 409, json: { error: "rejected" } }));
+  async function openBuilding() {
+    await page.goto("/");
+    await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+    const world = gridToScreen(buildingX + 1, buildingY + 1, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+    await page.getByTestId("aim-x").fill(String(world.x));
+    await page.getByTestId("aim-y").fill(String(world.y));
+    await page.getByTestId("aim-go").click();
+    const box = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
+    if (!box) throw new Error("Missing canvas");
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await expect(page.getByTestId("building-details")).toBeVisible();
+  }
+  await openBuilding();
+  await expect(page.getByTestId("production-queue")).toContainText("Slots: 0/2");
+  await expect(page.getByTestId("details-supply")).toHaveCount(0);
+  const start = page.waitForRequest(request => request.url().includes("/commands/"));
+  await page.getByTestId("start-production").first().click();
+  expect((await start).url()).toContain("/commands/start-production");
+  expect((await start).postDataJSON()).toMatchObject({ instanceId: buildingId, recipeId: "RCP-BREAD" });
+  expect((await (await start).response())?.status()).toBe(409);
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("production-queue")).toContainText("Slots: 0/2");
+  await expect(page.getByTestId("building-details")).toContainText("State: ACTIVE");
+  scenario = "empty";
+  await openBuilding();
+  await expect(page.getByTestId("start-production").first()).toBeDisabled();
+  scenario = "cancel";
+  await openBuilding();
+  await expect(page.getByTestId("production-queue")).toContainText("Slots: 1/2");
+  const cancel = page.waitForRequest(request => request.url().includes("/commands/"));
+  await page.getByTestId("cancel-production").click();
+  expect((await cancel).url()).toContain("/commands/cancel-production");
+  expect((await cancel).postDataJSON()).toMatchObject({ instanceId: buildingId, jobId: "00000000-0000-4000-8000-000000000001" });
+  expect((await (await cancel).response())?.status()).toBe(409);
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("production-queue")).toContainText("Slots: 1/2");
+  await expect(page.getByTestId("building-details")).toContainText("State: PRODUCING");
+  scenario = "supply";
+  await openBuilding();
+  const supply = page.waitForRequest(request => request.url().includes("/commands/"));
+  await page.getByTestId("details-supply").click();
+  expect((await supply).url()).toContain("/commands/supply-business");
+  expect((await supply).postDataJSON()).toMatchObject({ instanceId: buildingId });
+  expect((await (await supply).response())?.status()).toBe(409);
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("details-supply")).toBeVisible();
+  await expect(page.getByTestId("building-details")).toContainText("State: NEEDS_SUPPLY");
 });
