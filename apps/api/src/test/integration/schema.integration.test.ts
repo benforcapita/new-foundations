@@ -29,7 +29,11 @@ test("migrations apply once and stay idempotent on PostgreSQL 16", async () => {
   expect(version.rows[0]?.version).toContain("PostgreSQL 16");
 
   const first = await handle.pool.query<{ id: string }>("select id from schema_migrations order by id");
-  expect(first.rows.map((row) => row.id)).toEqual(["0001_init.sql", "0002_inventory_ledger_append_only.sql"]);
+  expect(first.rows.map((row) => row.id)).toEqual([
+    "0001_init.sql",
+    "0002_inventory_ledger_append_only.sql",
+    "0003_order_contract.sql",
+  ]);
 
   const appliedAgain = await migrate(handle.pool);
   expect(appliedAgain).toEqual([]);
@@ -143,6 +147,14 @@ test("open orders, active trains, and open franchises keep their partial unique 
   const client = await handle.pool.connect();
   try {
     await client.query("begin");
+    await client.query(
+      `insert into order_instances (
+        id, city_id, slot, template_id, requirements, status, difficulty, solvable, reward_coins, reward_xp, civic_stars
+      ) values (
+        'ord-story', 'dana_city', 1, 'ORD-T-001', '[{"goodId":"GOOD_BREAD","qty":3}]'::jsonb,
+        'OPEN', 'story', true, 180, 12, 1
+      )`,
+    );
     await client.query(
       `insert into order_instances (
         id, city_id, slot, template_id, requirements, status, difficulty, solvable, reward_coins, reward_xp, civic_stars

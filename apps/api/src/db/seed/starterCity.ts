@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import {
   CONTENT_VERSION,
+  ORDER_TEMPLATES,
   STARTER_MAP,
   agricultureById,
   buildingById,
   goodById,
   orderReward,
   warehouseCapacity,
+  type OrderTemplate,
 } from "@nf/shared";
 import type { Database } from "../client";
 import { buildingCells, buildingInstances, cities, cityCells, inventoryBalances, inventoryLedger, orderInstances, quests, sessions, users } from "../schema";
@@ -191,45 +193,23 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
     source: "tutorial_grant",
   });
 
-  const bread = goodById("GOOD_BREAD");
+  const seedBread = orderTemplate("ORD-T-001");
+  const easyBread = orderTemplate("ORD-EASY-BREAD");
+  // The catalog has no second level-1 easy card. Recovery pays a fixed 60 coins
+  // and only replaces the easy slot below 180 coins, so this tutorial wheat card
+  // keeps the easy coefficient instead.
   const wheatGood = goodById("GOOD_WHEAT");
-  const breadReward = orderReward([{ qty: 3, value: bread.value }], "easy");
-  const wheatReward = orderReward([{ qty: 3, value: wheatGood.value }], "easy");
+  const wheatQty = 3;
+  const wheatReward = orderReward([{ qty: wheatQty, value: wheatGood.value }], "easy");
   await tx.insert(orderInstances).values([
-    {
-      id: `${cityId}:order:0`,
-      cityId,
-      slot: 0,
-      templateId: "ORD-T-001",
-      requirements: [{ goodId: "GOOD_BREAD", qty: 3 }],
-      status: "OPEN" as const,
-      difficulty: "easy" as const,
-      solvable: true,
-      rewardCoins: breadReward.coins,
-      rewardXp: breadReward.xp,
-      civicStars: breadReward.civicStars,
-      version: 0,
-    },
-    {
-      id: `${cityId}:order:1`,
-      cityId,
-      slot: 1,
-      templateId: "ORD-EASY-BREAD",
-      requirements: [{ goodId: "GOOD_BREAD", qty: 3 }],
-      status: "OPEN" as const,
-      difficulty: "easy" as const,
-      solvable: true,
-      rewardCoins: breadReward.coins,
-      rewardXp: breadReward.xp,
-      civicStars: breadReward.civicStars,
-      version: 0,
-    },
+    catalogOrder(cityId, 0, seedBread),
+    catalogOrder(cityId, 1, easyBread),
     {
       id: `${cityId}:order:2`,
       cityId,
       slot: 2,
       templateId: "ORD-EASY-WHEAT",
-      requirements: [{ goodId: "GOOD_WHEAT", qty: 3 }],
+      requirements: [{ goodId: "GOOD_WHEAT", qty: wheatQty }],
       status: "OPEN" as const,
       difficulty: "easy" as const,
       solvable: true,
@@ -266,6 +246,31 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
       version: 0,
     },
   ]);
+}
+
+function orderTemplate(id: string): OrderTemplate {
+  const template = ORDER_TEMPLATES.find((item) => item.id === id);
+  if (template === undefined) {
+    throw new Error(`order template ${id} is not in the catalog`);
+  }
+  return template;
+}
+
+function catalogOrder(cityId: string, slot: number, template: OrderTemplate) {
+  return {
+    id: `${cityId}:order:${slot}`,
+    cityId,
+    slot,
+    templateId: template.id,
+    requirements: template.requirements.map((line) => ({ goodId: line.goodId, qty: line.qty })),
+    status: "OPEN" as const,
+    difficulty: template.difficulty,
+    solvable: true,
+    rewardCoins: template.reward.coins,
+    rewardXp: template.reward.xp,
+    civicStars: 1,
+    version: 0,
+  };
 }
 
 function assertPlacements(placements: readonly Placement[]): void {

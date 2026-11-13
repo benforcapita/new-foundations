@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { CONTENT_VERSION } from "@nf/shared";
+import { CONTENT_VERSION, ORDER_TEMPLATES, goodById, orderReward } from "@nf/shared";
 import { apiErrorSchema, catalogResponseSchema, commandSuccessSchema, healthResponseSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
 import { lockCityIds } from "../../plugins/idempotency";
@@ -168,10 +168,30 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
   );
 
   expect(snapshot.orders).toHaveLength(3);
+  const seedBread = ORDER_TEMPLATES.find((template) => template.id === "ORD-T-001");
+  const easyBread = ORDER_TEMPLATES.find((template) => template.id === "ORD-EASY-BREAD");
+  if (seedBread === undefined || easyBread === undefined) {
+    throw new Error("starter order templates are missing from the catalog");
+  }
+  const wheatGood = goodById("GOOD_WHEAT");
+  const wheatReward = orderReward([{ qty: 3, value: wheatGood.value }], "easy");
   expect(snapshot.orders.find((order) => order.slot === 0)).toMatchObject({
     templateId: "ORD-T-001",
+    difficulty: seedBread.difficulty,
     status: "OPEN",
     requirements: { GOOD_BREAD: 3 },
+    reward: { coins: seedBread.reward.coins, xp: seedBread.reward.xp, civicStars: 1 },
+  });
+  expect(snapshot.orders.find((order) => order.templateId === "ORD-EASY-BREAD")).toMatchObject({
+    difficulty: easyBread.difficulty,
+    status: "OPEN",
+    reward: { coins: easyBread.reward.coins, xp: easyBread.reward.xp, civicStars: 1 },
+  });
+  expect(snapshot.orders.find((order) => order.templateId === "ORD-EASY-WHEAT")).toMatchObject({
+    difficulty: "easy",
+    status: "OPEN",
+    requirements: { GOOD_WHEAT: 3 },
+    reward: { coins: wheatReward.coins, xp: wheatReward.xp, civicStars: wheatReward.civicStars },
   });
   const easy = snapshot.orders.filter((order) => order.templateId !== "ORD-T-001");
   expect(easy).toHaveLength(2);

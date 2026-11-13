@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { OrderDifficulty } from "@nf/shared";
 import {
   bigserial,
   boolean,
@@ -170,8 +171,8 @@ export const orderInstances = pgTable(
     slot: integer("slot").notNull(),
     templateId: text("template_id").notNull(),
     requirements: jsonb("requirements").$type<{ goodId: string; qty: number }[]>().notNull(),
-    status: text("status").$type<"OPEN" | "FULFILLED">().notNull(),
-    difficulty: text("difficulty").$type<"easy" | "medium" | "specialized">().notNull(),
+    status: text("status").$type<"OPEN" | "FULFILLED" | "REROLLED" | "REPLACED">().notNull(),
+    difficulty: text("difficulty").$type<OrderDifficulty>().notNull(),
     solvable: boolean("solvable").notNull(),
     rewardCoins: integer("reward_coins").notNull(),
     rewardXp: integer("reward_xp").notNull(),
