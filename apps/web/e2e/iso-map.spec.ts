@@ -206,6 +206,18 @@ async function pointerToPixelMs(page: Page, cell: { readonly x: number; readonly
   return page.evaluate(() => window.__nfPaintLatency ?? Promise.resolve(500));
 }
 
+test("debug readout changes do not resize the canvas", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  await openCity(page);
+  const canvas = page.getByTestId("game-canvas").locator("canvas");
+  await page.waitForTimeout(500);
+  const before = await canvas.boundingBox();
+  await page.getByTestId("ghost-text").evaluate((element) => { element.textContent = "debug ".repeat(500); });
+  await page.waitForTimeout(500);
+  const after = await canvas.boundingBox();
+  expect(after).toEqual(before);
+});
+
 test("placement ghost tracks the pointer, explains blocks, and rotates the station", async ({ page }) => {
   await openCity(page);
   await page.getByTestId("place-cottage").click();
