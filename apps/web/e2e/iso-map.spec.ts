@@ -57,14 +57,29 @@ function cellWorld(x: number, y: number): { x: number; y: number } {
   return gridToScreen(x + 0.5, y + 0.5, MAP_ORIGIN_X, MAP_ORIGIN_Y);
 }
 
+async function canvasCenter(page: Page): Promise<{ x: number; y: number }> {
+  const canvas = page.getByTestId("game-canvas").locator("canvas");
+  let previous = "";
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const box = await canvas.boundingBox();
+    if (box === null) {
+      throw new Error("canvas missing");
+    }
+    const key = `${box.x.toFixed(1)},${box.y.toFixed(1)},${box.width.toFixed(1)},${box.height.toFixed(1)}`;
+    if (key === previous) {
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    }
+    previous = key;
+    await nextFrame(page);
+  }
+  throw new Error("canvas layout did not settle");
+}
+
 async function aim(page: Page, cell: { readonly x: number; readonly y: number }): Promise<void> {
   const world = cellWorld(cell.x, cell.y);
   await aimWorld(page, world.x, world.y, 1);
-  const box = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
-  if (box === null) {
-    throw new Error("canvas missing");
-  }
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const center = await canvasCenter(page);
+  await page.mouse.move(center.x, center.y);
 }
 
 test("renders the 24x24 starter map with depth-sorted buildings", async ({ page }) => {
@@ -147,10 +162,6 @@ test("renders the 24x24 starter map with depth-sorted buildings", async ({ page 
 async function pointerToPixelMs(page: Page, cell: { readonly x: number; readonly y: number }): Promise<number> {
   const world = cellWorld(cell.x, cell.y);
   await aimWorld(page, world.x, world.y, 1);
-  const box = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
-  if (box === null) {
-    throw new Error("canvas missing");
-  }
   await page.evaluate(() => {
     const canvas = document.querySelector("canvas");
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -190,7 +201,8 @@ async function pointerToPixelMs(page: Page, cell: { readonly x: number; readonly
       canvas.addEventListener("pointermove", onMove, true);
     });
   });
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const center = await canvasCenter(page);
+  await page.mouse.move(center.x, center.y);
   return page.evaluate(() => window.__nfPaintLatency ?? Promise.resolve(500));
 }
 
@@ -292,7 +304,7 @@ async function creamPixels(page: Page): Promise<number> {
 test("state overlays collapse to status dots below zoom 0.9", async ({ page }) => {
   await openCity(page);
   await expect(page.getByTestId("overlay-cottage-build")).toHaveText("Under Construction");
-  const frames = JSON.parse(await page.getByTestId("sprite-frames").innerText()) as SpriteFrame[];
+  const frames = JSON.parse((await page.getByTestId("sprite-frames").textContent()) ?? "") as SpriteFrame[];
   const images = buildingImages(frames);
   const labeled = ["cottage-build", "grocery", "bakery", "cottage-ready"];
   for (const id of labeled) {

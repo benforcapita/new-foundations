@@ -20,6 +20,7 @@ body {
   flex-direction: column;
   gap: 8px;
   height: 100%;
+  overflow: hidden;
   padding: 12px;
 }
 
@@ -68,10 +69,14 @@ p {
 .readout,
 .statuses {
   display: flex;
-  flex-wrap: wrap;
+  flex: 0 0 44px;
+  flex-wrap: nowrap;
   gap: 8px 16px;
+  height: 44px;
   margin: 0;
+  overflow: hidden;
   padding: 0;
   font-size: 14px;
   list-style: none;
+  white-space: nowrap;
 }
