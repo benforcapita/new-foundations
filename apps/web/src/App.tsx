@@ -1,6 +1,7 @@
 import { useCityStore, visibleSnapshot } from "./api/store";
 import { APP_NAME } from "@nf/shared";
 import { useEffect } from "react";
+import { CityPanels } from "./components/CityPanels";
 import { Feedback } from "./components/Feedback";
 import { GameCanvas } from "./GameCanvas";
 import { usePlacementStore, useSceneStore } from "./game/scene-store";
@@ -37,6 +38,7 @@ export function App() {
         <p>{ready ? "Client ready" : "Starting client"}</p>
       </header>
       {!demo && <p>Click a ready building to collect; Shift-click a building to move it.</p>}
+      <CityPanels snapshot={snapshot} />
       <div className="toolbar">
         <button type="button" data-testid="place-cottage" onClick={() => selectBuilding("B-001")}>
           Place Cottage

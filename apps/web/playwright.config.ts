@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const port = 4173;
+const port = Number(process.env.NF_E2E_WEB_PORT ?? 4174);
+const apiPort = Number(process.env.NF_E2E_API_PORT ?? 3002);
 const baseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
@@ -13,14 +14,14 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: [{
-    command: "pnpm --filter @nf/api exec tsx src/index.ts",
-    url: "http://127.0.0.1:3001/healthz",
-    reuseExistingServer: process.env.CI === undefined,
+    command: `PORT=${apiPort} pnpm --filter @nf/api exec tsx src/index.ts`,
+    url: `http://127.0.0.1:${apiPort}/healthz`,
+    reuseExistingServer: false,
     timeout: 120_000,
   }, {
-    command: `pnpm preview --host 127.0.0.1 --port ${port}`,
+    command: `NF_TEST_API_PORT=${apiPort} pnpm preview --host 127.0.0.1 --port ${port}`,
     url: baseURL,
-    reuseExistingServer: process.env.CI === undefined,
+    reuseExistingServer: false,
     timeout: 120_000,
   }],
   projects: [

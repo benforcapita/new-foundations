@@ -106,3 +106,8 @@ button, input, select, a[href], [role="button"] { min-width: 44px; min-height: 4
 .levelup-layer { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 10; }
 .levelup-card { pointer-events: auto; padding: 32px; background: #253d4a; color: #f8eedb; font-size: 2rem; border: 3px solid #f8eedb; }
 .levelup-card span { display: block; font-size: 1rem; }
+
+.city-hud { display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; padding: .75rem; background: #223c37; color: white; }
+.city-hud progress { width: 8rem; }
+.city-panel { padding: 1rem; margin: .75rem 0; border: 1px solid #79958b; border-radius: .5rem; background: #f5f7ef; color: #182c27; }
+.city-panel button { margin: .2rem; }

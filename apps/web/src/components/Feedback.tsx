@@ -86,6 +86,12 @@ export function Feedback() {
   }
 
   useEffect(() => {
+    const announce = (event: Event) => setToast((event as CustomEvent<string>).detail);
+    window.addEventListener("nf-announce", announce);
+    return () => window.removeEventListener("nf-announce", announce);
+  }, []);
+
+  useEffect(() => {
     if (!levelup) {
       return;
     }
@@ -95,10 +101,6 @@ export function Feedback() {
 
   return (
     <section className="feedback" aria-label="Visual feedback showcase">
-      <div className="feedback-hud">
-        <span data-testid="hud-coins">Coins: 120</span>
-        <span data-testid="hud-xp">XP: 40 / 100</span>
-      </div>
       <div className="npc-list">
         {(["mia", "dana", "tom", "amir"] as const satisfies readonly Npc[]).map((npc) => (
           <NpcBadge key={npc} npc={npc} />

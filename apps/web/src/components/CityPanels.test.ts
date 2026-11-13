@@ -1,0 +1,20 @@
+import { describe, expect, it } from "vitest";
+import { BUILDINGS } from "@nf/shared";
+import type { Snapshot } from "@nf/shared/schemas";
+import { catalogAvailability, hasReady } from "./cityPanelState";
+
+describe("city HUD decisions", () => {
+  const snapshot = { city: { level: 1, coins: 200 }, buildings: [] } as unknown as Snapshot;
+  it("locks the station at level 1 and allows a free first cottage", () => {
+    const station = BUILDINGS.find(b => b.id === "B-011");
+    const cottage = BUILDINGS.find(b => b.id === "B-001");
+    if (!station || !cottage) throw new Error("Missing catalog definitions");
+    expect(catalogAvailability(snapshot, station).locked).toBe(true);
+    expect(station.unlockLevel).toBe(3);
+    expect(catalogAvailability(snapshot, cottage)).toEqual({ locked: false, affordable: true, cost: 0 });
+  });
+  it("enables collect all only when an instance is ready", () => {
+    expect(hasReady(snapshot)).toBe(false);
+    expect(hasReady({ ...snapshot, buildings: [{ state: "READY_TO_COLLECT" } as Snapshot["buildings"][number]] })).toBe(true);
+  });
+});

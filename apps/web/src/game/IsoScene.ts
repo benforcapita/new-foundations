@@ -1,5 +1,7 @@
 import {
   STARTER_MAP,
+  AGRICULTURE,
+  placeableFromBuilding,
   TERRAIN_ASSETS,
   agricultureById,
   buildingById,
@@ -20,7 +22,6 @@ import {
   demoPlacementCity,
   demoPlots,
   demoRoadTiles,
-  placeableBuilding,
 } from "./demoCity";
 import { GROUND_DEPTH, ROAD_DEPTH, footprintDepth, overlayDepth } from "./depth";
 import { ROAD_HINT_COLOR, ghostFeedback, nearestRoadCell, spriteFlipX } from "./ghost";
@@ -671,13 +672,13 @@ export class IsoScene extends Phaser.Scene {
         });
         if (building && !building.instanceId.startsWith("pending:")) {
           if (event.shiftKey) { this.movingId = building.instanceId; placement.select(building.buildingId); }
-          else if (building.state === "READY_TO_COLLECT") useCityStore.getState().enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.instanceId } });
+          else useSceneStore.getState().publish({ selectedId: building.instanceId });
         } else if (!event.shiftKey) {
           const plot = livePlots(this.snapshot()).find((item) => {
             const size = agricultureById(item.plotId).footprint;
             return grid.gx >= item.x && grid.gx < item.x + size.width && grid.gy >= item.y && grid.gy < item.y + size.height;
           });
-          if (plot?.ready) useCityStore.getState().enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: plot.instanceId } });
+          if (plot) useSceneStore.getState().publish({ selectedId: plot.instanceId });
         }
       }
     }
@@ -775,6 +776,8 @@ export class IsoScene extends Phaser.Scene {
       return;
     }
     const placement = usePlacementStore.getState();
+    const requestedMove = useSceneStore.getState().moveId;
+    if (requestedMove) { this.movingId = requestedMove; useSceneStore.getState().publish({ moveId: null }); }
     if (placement.catalogId === null) this.movingId = null;
     const previousLatency = useSceneStore.getState().ghost.latencyMs;
     if (placement.catalogId === null || this.pointerWorld === null) {
@@ -789,11 +792,12 @@ export class IsoScene extends Phaser.Scene {
       return;
     }
     const grid = screenToGrid(this.pointerWorld.x, this.pointerWorld.y, MAP_ORIGIN_X, MAP_ORIGIN_Y);
-    const definition = placeableBuilding(placement.catalogId);
+    const plotDefinition = AGRICULTURE.find(p => p.id === placement.catalogId);
+    const definition = plotDefinition ? { id: plotDefinition.id, category: "agriculture" as const, footprint: plotDefinition.footprint, costCoins: plotDefinition.cost.coins, unlockLevel: plotDefinition.unlockLevel } : placeableFromBuilding(buildingById(placement.catalogId as import("@nf/shared").BuildingId));
     const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, placement.rotation);
     const result = canPlace(this.placementCity(), definition, grid.gx, grid.gy, placement.rotation);
     const feedback = ghostFeedback(result);
-    const assetId = buildingById(placement.catalogId).assetId;
+    const assetId = plotDefinition ? plotDefinition.groundAssetId : buildingById(placement.catalogId as import("@nf/shared").BuildingId).assetId;
     const meta = getAssetMeta(assetId);
     image.setTexture(assetId);
     const aspect = image.width === 0 ? 1 : image.height / image.width;
