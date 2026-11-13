@@ -9,6 +9,8 @@ import {
   screenToGrid,
 } from "@nf/shared";
 import Phaser from "phaser";
+import { useCityStore, visibleSnapshot } from "../api/store";
+import { liveBuildings, livePlots, livePlacementCity } from "./liveCity";
 import { useSettings } from "../settings";
 import { bundledPngIds, resolveAssetUrl } from "./assetUrls";
 import { cropBobOffset } from "./bob";
@@ -163,6 +165,8 @@ export class IsoScene extends Phaser.Scene {
   private pointers = new Map<number, { x: number; y: number }>();
   private pinchStart: { distance: number; zoom: number } | null = null;
   private drag: { x: number; y: number } | null = null;
+  private press: { x: number; y: number } | null = null;
+  private movingId: string | null = null;
   private badges: Badge[] = [];
   private readonly buildingSprites: { id: string; image: Phaser.GameObjects.Image }[] = [];
   private aimNonce = 0;
@@ -253,6 +257,22 @@ export class IsoScene extends Phaser.Scene {
     }
   }
 
+  private isDemo(): boolean { return import.meta.env.VITE_DEMO_MODE === "1" || new URLSearchParams(window.location.search).get("demo") === "1"; }
+
+  private snapshot() {
+    const snapshot = visibleSnapshot(useCityStore.getState());
+    if (!snapshot) throw new Error("City snapshot is not ready");
+    return snapshot;
+  }
+
+  private placementCity() {
+    if (this.isDemo()) return demoPlacementCity();
+    const snapshot = this.snapshot();
+    if (!this.movingId) return livePlacementCity(snapshot);
+    const city = livePlacementCity({ ...snapshot, buildings: snapshot.buildings.filter((building) => building.id !== this.movingId) });
+    return { ...city, coins: Number.MAX_SAFE_INTEGER, population: 0, populationCap: Number.MAX_SAFE_INTEGER };
+  }
+
   private drawTerrain(): void {
     for (let y = 0; y < STARTER_MAP.height; y += 1) {
       const row = STARTER_MAP.rows[y];
@@ -273,14 +293,14 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private drawRoads(): void {
-    for (const road of demoRoadTiles()) {
+    for (const road of this.isDemo() ? demoRoadTiles() : []) {
       const image = placeAnchored(this, road.sprite.assetId, road.x, road.y, 1, 1, ROAD_DEPTH);
       image.setFlip(road.sprite.flipX, road.sprite.flipY);
     }
   }
 
   private drawPlots(): void {
-    for (const plot of demoPlots()) {
+    for (const plot of this.isDemo() ? demoPlots() : livePlots(this.snapshot())) {
       const definition = agricultureById(plot.plotId);
       const presentation = plotPresentation(plot.plotId);
       for (let dy = 0; dy < definition.footprint.height; dy += 1) {
@@ -334,7 +354,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private drawBuildings(): void {
-    for (const building of demoBuildings()) {
+    for (const building of this.isDemo() ? demoBuildings() : liveBuildings(this.snapshot())) {
       const definition = buildingById(building.buildingId);
       const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, building.rotation);
       const depth = footprintDepth(building.x, building.y, footprint.width, footprint.height);
@@ -623,10 +643,45 @@ export class IsoScene extends Phaser.Scene {
   private readonly onPointerDown = (event: PointerEvent): void => {
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     this.drag = { x: event.clientX, y: event.clientY };
+    this.press = { x: event.clientX, y: event.clientY };
     this.pinchStart = null;
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
+    const start = this.press;
+    if (!this.isDemo() && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) {
+      const placement = usePlacementStore.getState();
+      const ghost = useSceneStore.getState().ghost;
+      if (placement.catalogId && ghost.active && ghost.tone === "valid") {
+        const key = crypto.randomUUID();
+        if (this.movingId) {
+          useCityStore.getState().enqueue({ key, name: "move-building", body: { instanceId: this.movingId, x: ghost.x, y: ghost.y, rotation: placement.rotation } });
+          this.movingId = null;
+        } else {
+          useCityStore.getState().enqueue({ key, name: "place-building", body: { definitionId: placement.catalogId, x: ghost.x, y: ghost.y, rotation: placement.rotation } });
+        }
+        placement.cancel();
+      } else if (!placement.catalogId) {
+        const world = this.worldFromClient(event.clientX, event.clientY);
+        const grid = screenToGrid(world.x, world.y, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+        const building = liveBuildings(this.snapshot()).find((item) => {
+          const definition = buildingById(item.buildingId);
+          const size = rotatedFootprint(definition.footprint.width, definition.footprint.height, item.rotation);
+          return grid.gx >= item.x && grid.gx < item.x + size.width && grid.gy >= item.y && grid.gy < item.y + size.height;
+        });
+        if (building && !building.instanceId.startsWith("pending:")) {
+          if (event.shiftKey) { this.movingId = building.instanceId; placement.select(building.buildingId); }
+          else if (building.state === "READY_TO_COLLECT") useCityStore.getState().enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.instanceId } });
+        } else if (!event.shiftKey) {
+          const plot = livePlots(this.snapshot()).find((item) => {
+            const size = agricultureById(item.plotId).footprint;
+            return grid.gx >= item.x && grid.gx < item.x + size.width && grid.gy >= item.y && grid.gy < item.y + size.height;
+          });
+          if (plot?.ready) useCityStore.getState().enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: plot.instanceId } });
+        }
+      }
+    }
+    this.press = null;
     this.pointers.delete(event.pointerId);
     this.drag = null;
     this.pinchStart = null;
@@ -720,6 +775,7 @@ export class IsoScene extends Phaser.Scene {
       return;
     }
     const placement = usePlacementStore.getState();
+    if (placement.catalogId === null) this.movingId = null;
     const previousLatency = useSceneStore.getState().ghost.latencyMs;
     if (placement.catalogId === null || this.pointerWorld === null) {
       image.setVisible(false);
@@ -735,7 +791,7 @@ export class IsoScene extends Phaser.Scene {
     const grid = screenToGrid(this.pointerWorld.x, this.pointerWorld.y, MAP_ORIGIN_X, MAP_ORIGIN_Y);
     const definition = placeableBuilding(placement.catalogId);
     const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, placement.rotation);
-    const result = canPlace(demoPlacementCity(), definition, grid.gx, grid.gy, placement.rotation);
+    const result = canPlace(this.placementCity(), definition, grid.gx, grid.gy, placement.rotation);
     const feedback = ghostFeedback(result);
     const assetId = buildingById(placement.catalogId).assetId;
     const meta = getAssetMeta(assetId);
@@ -770,7 +826,7 @@ export class IsoScene extends Phaser.Scene {
     if (feedback.roadHint) {
       const nearest = nearestRoadCell(
         { x: grid.gx, y: grid.gy, width: footprint.width, height: footprint.height },
-        demoPlacementCity().roads,
+        this.placementCity().roads,
       );
       if (nearest !== null) {
         const from = footprintCenter(grid.gx, grid.gy, footprint.width, footprint.height);

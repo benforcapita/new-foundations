@@ -26,7 +26,7 @@ declare global {
 }
 
 async function openCity(page: Page): Promise<void> {
-  await page.goto("/");
+  await page.goto("/?demo=1");
   await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20_000 });
   await nextFrame(page);
 }

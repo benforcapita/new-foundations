@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("the motion setting controls the scene and survives reload", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.goto("/");
+  await page.goto("/?demo=1");
   const scene = page.getByTestId("game-canvas");
   const toggle = page.getByTestId("toggle-reduced-motion");
   await expect(page.getByTestId("scene-ready")).toHaveText("yes");

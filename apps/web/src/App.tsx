@@ -1,3 +1,4 @@
+import { useCityStore, visibleSnapshot } from "./api/store";
 import { APP_NAME } from "@nf/shared";
 import { useEffect } from "react";
 import { Feedback } from "./components/Feedback";
@@ -5,7 +6,16 @@ import { GameCanvas } from "./GameCanvas";
 import { usePlacementStore, useSceneStore } from "./game/scene-store";
 import { useShellStore } from "./shell-store";
 
+let bootPromise: Promise<void> | null = null;
+function bootOnce() {
+  bootPromise ??= useCityStore.getState().boot().finally(() => { bootPromise = null; });
+  return bootPromise;
+}
+
 export function App() {
+  const demo = import.meta.env.VITE_DEMO_MODE === "1" || new URLSearchParams(window.location.search).get("demo") === "1";
+  const city = useCityStore();
+  const snapshot = visibleSnapshot(city);
   const ready = useShellStore((state) => state.ready);
   const markReady = useShellStore((state) => state.markReady);
   const scene = useSceneStore();
@@ -14,7 +24,11 @@ export function App() {
 
   useEffect(() => {
     markReady();
-  }, [markReady]);
+    if (!demo && !useCityStore.getState().session) void bootOnce();
+    const online = () => { void useCityStore.getState().flush(); };
+    window.addEventListener("online", online);
+    return () => { window.removeEventListener("online", online); };
+  }, [markReady, demo]);
 
   return (
     <main className="app">
@@ -22,6 +36,7 @@ export function App() {
         <h1>{APP_NAME}</h1>
         <p>{ready ? "Client ready" : "Starting client"}</p>
       </header>
+      {!demo && <p>Click a ready building to collect; Shift-click a building to move it.</p>}
       <div className="toolbar">
         <button type="button" data-testid="place-cottage" onClick={() => selectBuilding("B-001")}>
           Place Cottage
@@ -53,7 +68,10 @@ export function App() {
           </button>
         ) : null}
       </div>
-      <GameCanvas />
+      {!demo && <div data-testid="sync-status" role="status">{city.queue.length ? `Pending Sync (${city.queue.length})` : "Synced"} {city.queue.length > 0 && <button type="button" disabled={city.flushing} onClick={() => void city.flush()}>Retry</button>}</div>}
+      {city.error && <p role="alert">{city.error}</p>}
+      {(demo || snapshot) && <GameCanvas key={demo ? "demo" : `${snapshot?.cityVersion}:${city.queue.map((item) => item.key).join(",")}`} />}
+      {snapshot && <ul data-testid="city-buildings">{snapshot.buildings.map((building) => <li key={building.id} data-testid="city-building">{building.definitionId} {building.x},{building.y}</li>)}</ul>}
       <Feedback />
       <section className="readout" data-testid="scene-readout" aria-live="polite">
         <span data-testid="scene-ready">{scene.ready ? "yes" : "no"}</span>

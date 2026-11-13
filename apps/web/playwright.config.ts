@@ -12,12 +12,17 @@ export default defineConfig({
     baseURL,
     trace: "on-first-retry",
   },
-  webServer: {
+  webServer: [{
+    command: "pnpm --filter @nf/api exec tsx src/index.ts",
+    url: "http://127.0.0.1:3001/healthz",
+    reuseExistingServer: process.env.CI === undefined,
+    timeout: 120_000,
+  }, {
     command: `pnpm preview --host 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: process.env.CI === undefined,
     timeout: 120_000,
-  },
+  }],
   projects: [
     {
       name: "chromium",
