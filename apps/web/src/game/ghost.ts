@@ -2,6 +2,7 @@ import type { PlaceResult, QuarterTurns } from "@nf/shared";
 
 export const GHOST_VALID_TINT = 0x7dffb3;
 export const GHOST_BLOCKED_TINT = 0xff6b6b;
+export const ROAD_HINT_COLOR = 0xf5d90a;
 
 export type GhostTone = "valid" | "blocked";
 
