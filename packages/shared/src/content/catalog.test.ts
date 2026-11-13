@@ -1,4 +1,5 @@
 import { expect, test } from "vitest";
+import { orderReward } from "../rules/economy";
 import seed from "../../../../assets/content_seed.json" with { type: "json" };
 import {
   AGRICULTURE,
@@ -472,6 +473,28 @@ test("quests, orders, and NPCs cover the starter loop", () => {
     ],
     reward: { coins: 325, xp: 25 },
   });
+  for (const template of ORDER_TEMPLATES) {
+    if (template.difficulty !== "easy" && template.difficulty !== "medium" && template.difficulty !== "specialized") {
+      continue;
+    }
+    const paid = orderReward(
+      template.requirements.map((line) => ({ qty: line.qty, value: goodById(line.goodId).value })),
+      template.difficulty,
+    );
+    expect(template.reward).toEqual({ coins: paid.coins, xp: paid.xp });
+  }
+  const seedBread = ORDER_TEMPLATES.find((template) => template.id === "ORD-T-001");
+  expect(seedBread).toBeDefined();
+  expect(orderReward([{ qty: 3, value: 60 }], "easy")).toMatchObject(seedBread?.reward ?? {});
+  expect(
+    orderReward(
+      [
+        { qty: 2, value: 130 },
+        { qty: 1, value: 60 },
+      ],
+      "medium",
+    ).coins,
+  ).toBe(352);
 
   expect(ORDER_GENERATOR).toMatchObject({
     boardSize: 3,
@@ -544,6 +567,8 @@ test("the order generator fills the board and inserts the recovery order", () =>
     hasSolvableOpenOrder: true,
   });
   expect(level4.map((order) => order.id)).toEqual(["ORD-EASY-BREAD", "ORD-MED-PLANKS", "ORD-SPEC-PLANKS"]);
+  expect(level4[0]).toMatchObject({ coins: 180, xp: 12 });
+  expect(level4[1]).toMatchObject({ coins: 352, xp: 23 });
 });
 
 test("starter map is 24x24 over the four open chunks", () => {

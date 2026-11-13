@@ -8,7 +8,7 @@ export type OrderTemplate = {
   readonly difficulty: OrderDifficulty;
   readonly unlockLevel: number;
   readonly requirements: readonly GoodStack[];
-  readonly reward?: { readonly coins: number; readonly xp: number };
+  readonly reward: { readonly coins: number; readonly xp: number };
 };
 
 export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
@@ -37,6 +37,7 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
     difficulty: "easy",
     unlockLevel: 1,
     requirements: [{ goodId: "GOOD_BREAD", qty: 3 }],
+    reward: { coins: 180, xp: 12 },
   },
   {
     id: "ORD-MED-PLANKS",
@@ -47,6 +48,7 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
       { goodId: "GOOD_PLANKS", qty: 2 },
       { goodId: "GOOD_BREAD", qty: 1 },
     ],
+    reward: { coins: 352, xp: 23 },
   },
   {
     id: "ORD-MED-CHEESE",
@@ -54,6 +56,7 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
     difficulty: "medium",
     unlockLevel: 5,
     requirements: [{ goodId: "GOOD_CHEESE", qty: 2 }],
+    reward: { coins: 198, xp: 13 },
   },
   {
     id: "ORD-SPEC-PLANKS",
@@ -64,6 +67,7 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
       { goodId: "GOOD_PLANKS", qty: 2 },
       { goodId: "GOOD_BREAD", qty: 1 },
     ],
+    reward: { coins: 400, xp: 27 },
   },
   {
     id: "ORD-SPEC-BOOKS",
@@ -71,6 +75,7 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
     difficulty: "specialized",
     unlockLevel: 10,
     requirements: [{ goodId: "GOOD_BOOKS", qty: 2 }],
+    reward: { coins: 550, xp: 37 },
   },
 ];
 
@@ -161,6 +166,8 @@ export function generateOrderBoard(input: OrderBoardInput): readonly GeneratedOr
       difficulty: picked.difficulty,
       requirements: picked.requirements,
       recovery: false,
+      coins: picked.reward.coins,
+      xp: picked.reward.xp,
     });
   }
 

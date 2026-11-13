@@ -121,6 +121,24 @@ test("order rewards use difficulty coefficients, a 5 XP floor, and one civic sta
       "medium",
     ),
   ).toEqual({ coins: 352, xp: 23, civicStars: 1 });
+  expect(
+    orderReward(
+      [
+        { qty: 2, value: 130 },
+        { qty: 1, value: 60 },
+      ],
+      "easy",
+    ),
+  ).toEqual({ coins: 320, xp: 21, civicStars: 1 });
+  expect(
+    orderReward(
+      [
+        { qty: 2, value: 130 },
+        { qty: 1, value: 60 },
+      ],
+      "specialized",
+    ),
+  ).toEqual({ coins: 400, xp: 27, civicStars: 1 });
   expect(orderReward([{ qty: 2, value: 220 }], "specialized")).toEqual({ coins: 550, xp: 37, civicStars: 1 });
 });
 
