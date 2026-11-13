@@ -1,0 +1,31 @@
+{
+  "name": "new-foundations",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @nf/web --filter @nf/api dev",
+    "typecheck": "pnpm exec tsc -p packages/shared/tsconfig.json && pnpm exec tsc -p apps/api/tsconfig.json && pnpm exec tsc -p apps/web/tsconfig.json && pnpm exec tsc -p apps/web/tsconfig.node.json && pnpm exec tsc -p tsconfig.tests.json",
+    "lint": "eslint .",
+    "test:unit": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:up": "docker compose up db"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.14.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  }
+}

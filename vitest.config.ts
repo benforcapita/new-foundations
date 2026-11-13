@@ -1,0 +1,10 @@
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    environment: "node",
+    include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "tests/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/*.integration.test.ts"],
+    reporters: process.env.CI === undefined ? ["default"] : ["verbose"],
+  },
+});

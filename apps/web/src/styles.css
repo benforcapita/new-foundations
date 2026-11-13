@@ -1,0 +1,22 @@
+:root {
+  color: #f4f1ea;
+  background: #12151c;
+  font-family: "Segoe UI", sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  padding: 24px;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 1.5rem;
+}
+
+p {
+  margin: 0 0 16px;
+}
