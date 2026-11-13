@@ -186,18 +186,27 @@ export function presentDelta(input: {
   readonly toVersion: number;
   readonly inventory: Snapshot["inventory"];
   readonly city?: CityHeader;
+  readonly buildings?: readonly PresentedBuilding[];
+  readonly removedBuildingIds?: readonly string[];
+  readonly jobs?: readonly PresentedJob[];
+  readonly orders?: readonly PresentedOrder[];
+  readonly train?: PresentedTrain | null;
+  readonly franchises?: readonly PresentedFranchise[];
+  readonly quests?: readonly PresentedQuest[];
 }): Delta {
+  const train = input.train === undefined ? undefined : presentTrain(input.train);
   return deltaSchema.parse({
     fromVersion: input.fromVersion,
     toVersion: input.toVersion,
     ...(input.city === undefined ? {} : { city: input.city }),
-    buildings: [],
-    removedBuildingIds: [],
+    buildings: (input.buildings ?? []).map(presentBuilding),
+    removedBuildingIds: [...(input.removedBuildingIds ?? [])],
     inventory: input.inventory,
-    jobs: [],
-    orders: [],
-    franchises: [],
-    quests: [],
+    jobs: (input.jobs ?? []).filter((job) => job.movedToOutputAt === null && job.cancelledAt === null).map(presentJob),
+    orders: (input.orders ?? []).map(presentOrder),
+    ...(train === undefined || train === null ? {} : { train }),
+    franchises: (input.franchises ?? []).map(presentFranchise),
+    quests: (input.quests ?? []).map(presentQuest),
   });
 }
 
