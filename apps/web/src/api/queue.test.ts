@@ -48,3 +48,34 @@ it("limits queued production to two slots until level five", () => {
   expect(composeSnapshot(snapshot, commands).jobs).toHaveLength(2);
   expect(composeSnapshot({ ...snapshot, city: { ...snapshot.city, level: 5 } }, commands).jobs).toHaveLength(3);
 });
+
+it("applies order rewards and inventory once and hides rerolled cards", () => {
+  const snapshot = { buildings: [], jobs: [], city: { coins: 750, xp: 0, civicStars: 0 }, inventory: { GOOD_BREAD: 3 }, orders: [
+    { id: "a", status: "OPEN", requirements: { GOOD_BREAD: 3 }, reward: { coins: 180, xp: 12, civicStars: 1 } },
+    { id: "b", status: "OPEN", requirements: {}, reward: { coins: 0, xp: 0, civicStars: 0 } },
+  ] } as unknown as Snapshot;
+  const result = composeSnapshot(snapshot, [{ key: "1", name: "fulfill-order", body: { orderId: "a" } }, { key: "2", name: "reroll-order", body: { orderId: "b" } }]);
+  expect(result.city).toMatchObject({ coins: 930, xp: 12, civicStars: 1 });
+  expect(result.inventory.GOOD_BREAD).toBe(0);
+  expect(result.orders.map(o => o.status)).toEqual(["FULFILLED", "REROLLED"]);
+  expect(snapshot.inventory.GOOD_BREAD).toBe(3);
+});
+
+
+it("rerolls without consuming goods or granting rewards, and ignores closed orders", () => {
+  const order = { id: "a", status: "OPEN", requirements: { GOOD_BREAD: 3 }, reward: { coins: 180, xp: 12, civicStars: 1 } };
+  const snapshot = { buildings: [], jobs: [], city: { coins: 750, xp: 4, civicStars: 2 }, inventory: { GOOD_BREAD: 5 }, orders: [order] } as unknown as Snapshot;
+  const rerolled = composeSnapshot(snapshot, [{ key: "1", name: "reroll-order", body: { orderId: "a" } }]);
+  expect(rerolled.city).toEqual(snapshot.city);
+  expect(rerolled.inventory).toEqual(snapshot.inventory);
+  expect(rerolled.orders[0]?.status).toBe("REROLLED");
+  for (const status of ["FULFILLED", "REROLLED"] as const) {
+    const closed = { ...snapshot, orders: [{ ...order, status }] } as Snapshot;
+    for (const name of ["fulfill-order", "reroll-order"] as const) {
+      const result = composeSnapshot(closed, [{ key: name, name, body: { orderId: "a" } }]);
+      expect(result.city).toEqual(closed.city);
+      expect(result.inventory).toEqual(closed.inventory);
+      expect(result.orders).toEqual(closed.orders);
+    }
+  }
+});

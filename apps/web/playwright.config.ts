@@ -7,6 +7,7 @@ const baseURL = `http://127.0.0.1:${port}`;
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
+  workers: 1,
   forbidOnly: process.env.CI !== undefined,
   retries: 0,
   use: {
@@ -14,7 +15,7 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: [{
-    command: `PORT=${apiPort} pnpm --filter @nf/api exec tsx src/index.ts`,
+    command: `NODE_ENV=test PORT=${apiPort} pnpm --filter @nf/api exec tsx src/index.ts`,
     url: `http://127.0.0.1:${apiPort}/healthz`,
     reuseExistingServer: false,
     timeout: 120_000,

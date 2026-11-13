@@ -624,3 +624,26 @@ function readString(value: unknown): string {
   }
   return value;
 }
+
+test("test clock header is only honored in test mode", async () => {
+  const session = await guest();
+  const fixed = new Date("2026-01-01T00:00:00.000Z");
+  const overridden = new Date("2026-01-02T12:34:56.000Z");
+  const clockApp = buildApp({ logger: false, database: handle, clock: () => fixed });
+  const original = process.env.NODE_ENV;
+  try {
+    process.env.NODE_ENV = "test";
+    for (const header of [overridden.toISOString(), String(overridden.getTime())]) {
+      const response = await clockApp.inject({ method: "GET", url: "/v1/cities/current", headers: { authorization: session.authorization, "x-test-now": header } });
+      expect(response.json().serverNow).toBe(overridden.toISOString());
+    }
+    const invalid = await clockApp.inject({ method: "GET", url: "/v1/cities/current", headers: { authorization: session.authorization, "x-test-now": "invalid" } });
+    expect(invalid.json().serverNow).toBe(fixed.toISOString());
+    process.env.NODE_ENV = "production";
+    const response = await clockApp.inject({ method: "GET", url: "/v1/cities/current", headers: { authorization: session.authorization, "x-test-now": overridden.toISOString() } });
+    expect(response.json().serverNow).toBe(fixed.toISOString());
+  } finally {
+    if (original === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = original;
+    await clockApp.close();
+  }
+});
