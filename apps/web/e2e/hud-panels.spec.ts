@@ -10,7 +10,8 @@ test("catalog, warehouse, collection and keyboard shortcut use the live city", a
   await expect(page.getByTestId("catalog-lock-B-011")).toContainText("level 3");
   await expect(page.getByTestId("catalog-item-B-011").getByRole("button")).toBeDisabled();
   await page.getByRole("button", { name: "Close" }).click();
-  await page.getByTestId("aim-x").fill("c");
+  await page.getByTestId("aim-x").focus();
+  await page.keyboard.press("c");
   await expect(page.getByTestId("collect-all")).toBeEnabled();
   await page.getByTestId("collect-all").click();
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
@@ -30,6 +31,7 @@ test("selecting a plot opens its details", async ({ page }) => {
     return snapshot.buildings.find(b => b.definitionId === "AG-001");
   });
   if (!plot) throw new Error("Missing starter plot");
+  const initialCount = await page.getByTestId("city-building").count();
   const world = gridToScreen(plot.x + 0.5, plot.y + 0.5, MAP_ORIGIN_X, MAP_ORIGIN_Y);
   await page.getByTestId("aim-x").fill(String(world.x));
   await page.getByTestId("aim-y").fill(String(world.y));
@@ -54,6 +56,8 @@ test("selecting a plot opens its details", async ({ page }) => {
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
   await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(1);
+  await expect(page.getByTestId("city-building").filter({ hasText: `AG-001 ${plot.x},${plot.y}` })).toHaveCount(0);
+  await expect(page.getByTestId("city-building")).toHaveCount(initialCount);
   await expect(page.getByTestId("scene-ready")).toHaveText("yes");
   const movedBox = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
   if (!movedBox) throw new Error("Missing moved canvas");
@@ -61,8 +65,37 @@ test("selecting a plot opens its details", async ({ page }) => {
   await expect(page.getByTestId("building-details")).toBeVisible();
   await page.getByTestId("details-remove").click();
   await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(0);
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
   await page.getByRole("button", { name: "Undo" }).click();
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
   await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(1);
+});
+
+test("HUD matches the server and shortcut respects focus, modifiers and readiness", async ({ page }) => {
+  let collects = 0;
+  page.on("request", request => { if (request.url().endsWith("/commands/collect-all")) collects++; });
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  const snapshot = await page.evaluate(async () => {
+    const token = localStorage.getItem("nf_session_token");
+    return (await fetch("/v1/cities/current", { headers: { Authorization: `Bearer ${token}` } })).json() as Promise<{ city: { coins: number; xp: number; level: number; warehouseCap: number }; inventory: Record<string, number> }>;
+  });
+  await expect(page.getByTestId("hud-coins")).toHaveText(`Coins: ${snapshot.city.coins}`);
+  await expect(page.getByTestId("hud-xp")).toContainText(`XP: ${snapshot.city.xp} /`);
+  await expect(page.getByLabel("City status")).toContainText(`Level ${snapshot.city.level}`);
+  const total = Object.values(snapshot.inventory).reduce((a, b) => a + b, 0);
+  await expect(page.getByRole("button", { name: `Warehouse ${total}/${snapshot.city.warehouseCap}` })).toBeVisible();
+  await page.getByTestId("aim-x").focus();
+  await page.keyboard.press("c");
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  for (const modifier of ["Control", "Meta", "Alt", "Shift"]) await page.keyboard.press(`${modifier}+c`);
+  expect(collects).toBe(0);
+  const request = page.waitForRequest(request => request.url().endsWith("/commands/collect-all"));
+  await page.keyboard.press("c");
+  await request;
+  await expect(page.getByTestId("collect-all")).toBeDisabled();
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await page.keyboard.press("c");
+  expect(collects).toBe(1);
 });
