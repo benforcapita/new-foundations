@@ -1,257 +1,289 @@
 import { z } from "zod";
-import { AGRICULTURE_IDS, BUILDING_IDS, DECORATION_IDS, GOOD_IDS, RECIPE_IDS, ROAD_ID } from "../content/ids";
-import { deltaSchema, snapshotSchema } from "./snapshot";
+import { BUILDING_IDS, RECIPE_IDS } from "../content/ids";
+import { type PlaceReason } from "../rules/canPlace";
+import { deltaSchema } from "./snapshot";
 
 export const ERROR_CODES = [
+  "CELL_OCCUPIED",
+  "INSUFFICIENT_GOODS",
+  "INSUFFICIENT_COINS",
+  "STATE_CHANGED",
+  "CONTENT_VERSION_MISMATCH",
+  "LOCKED_BY_LEVEL",
   "OUT_OF_BOUNDS",
   "CHUNK_LOCKED",
-  "OCCUPIED",
   "BAD_TERRAIN",
-  "LOCKED_BY_LEVEL",
-  "INSUFFICIENT_COINS",
-  "POP_CAP",
-  "INSUFFICIENT_GOODS",
-  "ILLEGAL_TRANSITION",
+  "POP_CAP_REACHED",
+  "IDEMPOTENCY_KEY_REUSED",
+  "REROLL_COOLDOWN",
   "LAST_WHEAT_PLOT",
   "TOWN_HALL",
-  "WAREHOUSE_FULL",
-  "VERSION_CONFLICT",
-  "CONTENT_VERSION_MISMATCH",
-  "NOT_FOUND",
   "VALIDATION",
+  "UNAUTHORIZED",
+  "NOT_FOUND",
+  "RATE_LIMITED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
 
 export const ERROR_HTTP_STATUS: { readonly [Code in ErrorCode]: number } = {
+  CELL_OCCUPIED: 409,
+  INSUFFICIENT_GOODS: 409,
+  INSUFFICIENT_COINS: 409,
+  STATE_CHANGED: 409,
+  CONTENT_VERSION_MISMATCH: 412,
+  LOCKED_BY_LEVEL: 422,
   OUT_OF_BOUNDS: 422,
   CHUNK_LOCKED: 422,
-  OCCUPIED: 422,
   BAD_TERRAIN: 422,
-  LOCKED_BY_LEVEL: 422,
-  INSUFFICIENT_COINS: 422,
-  POP_CAP: 422,
-  INSUFFICIENT_GOODS: 422,
-  ILLEGAL_TRANSITION: 409,
-  LAST_WHEAT_PLOT: 409,
-  TOWN_HALL: 409,
-  WAREHOUSE_FULL: 409,
-  VERSION_CONFLICT: 409,
-  CONTENT_VERSION_MISMATCH: 409,
-  NOT_FOUND: 404,
+  POP_CAP_REACHED: 422,
+  IDEMPOTENCY_KEY_REUSED: 422,
+  REROLL_COOLDOWN: 422,
+  LAST_WHEAT_PLOT: 422,
+  TOWN_HALL: 422,
   VALIDATION: 400,
+  UNAUTHORIZED: 401,
+  NOT_FOUND: 404,
+  RATE_LIMITED: 429,
 };
 
-const commandMeta = {
-  idempotencyKey: z.string().min(1),
-  cityVersion: z.number().int().nonnegative(),
-  contentVersion: z.number().int().positive(),
+const PLACE_REASON_ERROR: { readonly [Reason in PlaceReason]: ErrorCode } = {
+  OCCUPIED: "CELL_OCCUPIED",
+  INSUFFICIENT_COINS: "INSUFFICIENT_COINS",
+  POP_CAP: "POP_CAP_REACHED",
+  OUT_OF_BOUNDS: "OUT_OF_BOUNDS",
+  CHUNK_LOCKED: "CHUNK_LOCKED",
+  BAD_TERRAIN: "BAD_TERRAIN",
+  LOCKED_BY_LEVEL: "LOCKED_BY_LEVEL",
 };
+
+export function apiErrorForPlaceReason(reason: PlaceReason): { readonly code: ErrorCode; readonly status: number } {
+  const code = PLACE_REASON_ERROR[reason];
+  return { code, status: ERROR_HTTP_STATUS[code] };
+}
 
 const rotationSchema = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
-const goodQtySchema = z.object({
-  goodId: z.enum(GOOD_IDS),
-  qty: z.number().int().positive(),
-});
 
-const placeableIdSchema = z.enum([...BUILDING_IDS, ...AGRICULTURE_IDS, ...DECORATION_IDS, ROAD_ID]);
-
-export const placeBuildingCommandSchema = z.object({
-  type: z.literal("place-building"),
-  ...commandMeta,
-  definitionId: placeableIdSchema,
-  x: z.number().int(),
-  y: z.number().int(),
-  rotation: rotationSchema,
-});
-
-export const moveBuildingCommandSchema = z.object({
-  type: z.literal("move-building"),
-  ...commandMeta,
-  instanceId: z.string().min(1),
-  x: z.number().int(),
-  y: z.number().int(),
-  rotation: rotationSchema,
-});
-
-export const removeBuildingCommandSchema = z.object({
-  type: z.literal("remove-building"),
-  ...commandMeta,
-  instanceId: z.string().min(1),
-});
-
-export const collectAllCommandSchema = z.object({
-  type: z.literal("collect-all"),
-  ...commandMeta,
-  priority: z.enum(["quest-first", "oldest-first"]),
-});
-
-export const startProductionCommandSchema = z.object({
-  type: z.literal("start-production"),
-  ...commandMeta,
-  buildingId: z.string().min(1),
-  recipeId: z.enum(RECIPE_IDS),
-});
-
-export const supplyBusinessCommandSchema = z.object({
-  type: z.literal("supply-business"),
-  ...commandMeta,
-  instanceId: z.string().min(1),
-});
-
-export const fulfillOrderCommandSchema = z.object({
-  type: z.literal("fulfill-order"),
-  ...commandMeta,
-  orderId: z.string().min(1),
-});
-
-export const rerollOrderCommandSchema = z.object({
-  type: z.literal("reroll-order"),
-  ...commandMeta,
-  orderId: z.string().min(1),
-});
-
-export const upgradeBuildingCommandSchema = z.object({
-  type: z.literal("upgrade-building"),
-  ...commandMeta,
-  instanceId: z.string().min(1),
-});
-
-export const upgradeWarehouseCommandSchema = z.object({
-  type: z.literal("upgrade-warehouse"),
-  ...commandMeta,
-});
-
-export const expandChunkCommandSchema = z.object({
-  type: z.literal("expand-chunk"),
-  ...commandMeta,
-  chunkX: z.number().int().nonnegative(),
-  chunkY: z.number().int().nonnegative(),
-});
-
-export const franchiseRequestCommandSchema = z.object({
-  type: z.literal("franchise-request"),
-  ...commandMeta,
-  hostCityId: z.string().min(1),
-  businessDefinitionId: z.enum(BUILDING_IDS),
-  plotX: z.number().int(),
-  plotY: z.number().int(),
-});
-
-export const franchiseAcceptCommandSchema = z.object({
-  type: z.literal("franchise-accept"),
-  ...commandMeta,
-  franchiseId: z.string().min(1),
-});
-
-export const franchiseSupplyCommandSchema = z.object({
-  type: z.literal("franchise-supply"),
-  ...commandMeta,
-  franchiseId: z.string().min(1),
-  goods: z.array(goodQtySchema).min(1),
-});
-
-export const trainFillCommandSchema = z.object({
-  type: z.literal("train-fill"),
-  ...commandMeta,
-  trainId: z.string().min(1),
-  wagonIndex: z.number().int().min(0).max(2),
-  goodId: z.enum(GOOD_IDS),
-  qty: z.number().int().min(3).max(8),
-});
-
-export const trainDepartCommandSchema = z.object({
-  type: z.literal("train-depart"),
-  ...commandMeta,
-  trainId: z.string().min(1),
-});
-
-export const commandSchema = z.discriminatedUnion("type", [
-  placeBuildingCommandSchema,
-  moveBuildingCommandSchema,
-  removeBuildingCommandSchema,
-  collectAllCommandSchema,
-  startProductionCommandSchema,
-  supplyBusinessCommandSchema,
-  fulfillOrderCommandSchema,
-  rerollOrderCommandSchema,
-  upgradeBuildingCommandSchema,
-  upgradeWarehouseCommandSchema,
-  expandChunkCommandSchema,
-  franchiseRequestCommandSchema,
-  franchiseAcceptCommandSchema,
-  franchiseSupplyCommandSchema,
-  trainFillCommandSchema,
-  trainDepartCommandSchema,
-]);
-
-export const snapshotQuerySchema = z.object({
-  cityId: z.string().min(1),
-  sinceVersion: z.number().int().nonnegative().optional(),
-});
-
-export const catalogQuerySchema = z.object({
-  version: z.number().int().positive(),
-});
-
-export const entitlementsQuerySchema = z.object({
-  userId: z.string().min(1),
-});
-
-export const apiErrorSchema = z.object({
-  code: z.enum(ERROR_CODES),
-  message: z.string().min(1),
-  cityVersion: z.number().int().nonnegative().optional(),
-  delta: deltaSchema.optional(),
-});
-
-export const commandSuccessSchema = z.object({
-  ok: z.literal(true),
+export const commandHeadersSchema = z.object({
+  authorization: z.string().regex(/^Bearer \S+$/),
+  idempotencyKey: z.string().uuid(),
   cityVersion: z.number().int().nonnegative(),
   contentVersion: z.number().int().positive(),
-  replayed: z.boolean(),
-  delta: deltaSchema,
 });
 
-export const commandFailureSchema = z.object({
-  ok: z.literal(false),
-  error: apiErrorSchema,
-});
+export const placeBuildingCommandSchema = z
+  .object({
+    definitionId: z.enum(BUILDING_IDS),
+    x: z.number().int(),
+    y: z.number().int(),
+    rotation: rotationSchema,
+  })
+  .strict();
 
-export const commandResponseSchema = z.discriminatedUnion("ok", [commandSuccessSchema, commandFailureSchema]);
+export const moveBuildingCommandSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    x: z.number().int(),
+    y: z.number().int(),
+    rotation: rotationSchema,
+    undoOf: z.string().min(1).optional(),
+  })
+  .strict();
 
-export const snapshotResponseSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("snapshot"), snapshot: snapshotSchema }),
-  z.object({ kind: z.literal("delta"), delta: deltaSchema }),
-]);
+export const removeBuildingCommandSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    undo: z.literal(true).optional(),
+  })
+  .strict();
 
-export const catalogResponseSchema = z.object({
-  contentVersion: z.number().int().positive(),
-  buildingIds: z.array(z.enum(BUILDING_IDS)),
-  agricultureIds: z.array(z.enum(AGRICULTURE_IDS)),
-  goodIds: z.array(z.enum(GOOD_IDS)),
-  recipeIds: z.array(z.enum(RECIPE_IDS)),
-  decorationIds: z.array(z.enum(DECORATION_IDS)),
-  roadIds: z.array(z.literal(ROAD_ID)),
-  levelCount: z.number().int().min(1).max(15),
-});
+export const collectAllCommandSchema = z.object({}).strict();
 
-export const entitlementsResponseSchema = z.object({
-  userId: z.string().min(1),
-  entitlements: z.array(
-    z.object({
-      productId: z.string().min(1),
-      storeTransactionId: z.string().min(1),
-    }),
-  ),
-});
+export const collectCommandSchema = z.object({ instanceId: z.string().min(1) }).strict();
 
-export type Command = z.infer<typeof commandSchema>;
-export type CommandResponse = z.infer<typeof commandResponseSchema>;
+export const startProductionCommandSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    recipeId: z.enum(RECIPE_IDS),
+  })
+  .strict();
+
+export const cancelProductionCommandSchema = z
+  .object({
+    instanceId: z.string().min(1),
+    jobId: z.string().min(1),
+  })
+  .strict();
+
+export const supplyBusinessCommandSchema = z.object({ instanceId: z.string().min(1) }).strict();
+
+export const fulfillOrderCommandSchema = z.object({ orderId: z.string().min(1) }).strict();
+
+export const rerollOrderCommandSchema = z.object({ orderId: z.string().min(1) }).strict();
+
+export const expandLandCommandSchema = z
+  .object({
+    chunkX: z.number().int().nonnegative(),
+    chunkY: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const upgradeWarehouseCommandSchema = z.object({}).strict();
+
+export const upgradeBuildingCommandSchema = z.object({ instanceId: z.string().min(1) }).strict();
+
+export const trainSupplyCommandSchema = z
+  .object({
+    wagonIndex: z.number().int().min(0).max(2),
+    qty: z.number().int().min(3).max(8),
+  })
+  .strict();
+
+export const trainDispatchCommandSchema = z.object({}).strict();
+
+export const trainHelpRequestCommandSchema = z.object({ wagonIndex: z.number().int().min(0).max(2) }).strict();
+
+export const npcVisitActionCommandSchema = z
+  .object({
+    npcCityId: z.string().min(1),
+    action: z.enum(["harvest", "cleanup", "decorate", "supply"]),
+    targetId: z.string().min(1),
+  })
+  .strict();
+
+export const setCollectPriorityCommandSchema = z
+  .object({
+    priority: z.enum(["QUEST_FIRST", "OLDEST_FIRST"]),
+  })
+  .strict();
+
+export const claimQuestCommandSchema = z
+  .object({
+    questId: z.string().min(1),
+    periodKey: z.string().min(1),
+  })
+  .strict();
+
+export const franchiseRequestCommandSchema = z
+  .object({
+    hostCityId: z.string().min(1),
+    plotId: z.string().min(1),
+    businessDefinitionId: z.enum(BUILDING_IDS),
+  })
+  .strict();
+
+export const franchiseSupplyCommandSchema = z
+  .object({
+    cycles: z.union([z.literal(1), z.literal(2)]),
+  })
+  .strict();
+
+export const franchiseCollectCommandSchema = z.object({}).strict();
+
+export const authSessionCommandSchema = z
+  .object({
+    token: z.string().min(1).optional(),
+    recoveryCode: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const telemetryCommandSchema = z
+  .object({
+    events: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1),
+            props: z.record(z.string(), z.unknown()).optional(),
+          })
+          .strict(),
+      )
+      .max(50),
+  })
+  .strict();
+
+export const commandBodySchemas = {
+  "place-building": placeBuildingCommandSchema,
+  "move-building": moveBuildingCommandSchema,
+  "remove-building": removeBuildingCommandSchema,
+  "collect-all": collectAllCommandSchema,
+  collect: collectCommandSchema,
+  "start-production": startProductionCommandSchema,
+  "cancel-production": cancelProductionCommandSchema,
+  "supply-business": supplyBusinessCommandSchema,
+  "fulfill-order": fulfillOrderCommandSchema,
+  "reroll-order": rerollOrderCommandSchema,
+  "expand-land": expandLandCommandSchema,
+  "upgrade-warehouse": upgradeWarehouseCommandSchema,
+  "upgrade-building": upgradeBuildingCommandSchema,
+  "train-supply": trainSupplyCommandSchema,
+  "train-dispatch": trainDispatchCommandSchema,
+  "train-help-request": trainHelpRequestCommandSchema,
+  "npc-visit-action": npcVisitActionCommandSchema,
+  "set-collect-priority": setCollectPriorityCommandSchema,
+  "claim-quest": claimQuestCommandSchema,
+  "franchise-request": franchiseRequestCommandSchema,
+  "franchise-supply": franchiseSupplyCommandSchema,
+  "franchise-collect": franchiseCollectCommandSchema,
+  "auth-session": authSessionCommandSchema,
+  telemetry: telemetryCommandSchema,
+} as const;
+
+export type CommandName = keyof typeof commandBodySchemas;
+
+export const apiErrorSchema = z
+  .object({
+    error: z
+      .object({
+        code: z.enum(ERROR_CODES),
+        message: z.string().min(1),
+        details: z.unknown().optional(),
+      })
+      .strict(),
+    delta: deltaSchema.optional(),
+    cityVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const commandSuccessSchema = z
+  .object({
+    result: z.unknown(),
+    delta: deltaSchema,
+    cityVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const snapshotQuerySchema = z
+  .object({
+    cityId: z.string().min(1),
+    sinceVersion: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const catalogQuerySchema = z
+  .object({
+    version: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export const catalogResponseSchema = z
+  .object({
+    contentVersion: z.number().int().positive(),
+    catalog: z.unknown(),
+  })
+  .strict();
+
+export const healthResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    db: z.literal("up"),
+    version: z.string().min(1),
+  })
+  .strict();
+
+export type CommandHeaders = z.infer<typeof commandHeadersSchema>;
+export type ApiError = z.infer<typeof apiErrorSchema>;
+export type CommandSuccess = z.infer<typeof commandSuccessSchema>;
 export type SnapshotQuery = z.infer<typeof snapshotQuerySchema>;
-export type SnapshotResponse = z.infer<typeof snapshotResponseSchema>;
 export type CatalogQuery = z.infer<typeof catalogQuerySchema>;
 export type CatalogResponse = z.infer<typeof catalogResponseSchema>;
-export type EntitlementsQuery = z.infer<typeof entitlementsQuerySchema>;
-export type EntitlementsResponse = z.infer<typeof entitlementsResponseSchema>;
-export type ApiError = z.infer<typeof apiErrorSchema>;

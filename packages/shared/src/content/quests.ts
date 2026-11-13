@@ -1,9 +1,13 @@
 export type QuestEvent =
   | "building_placed"
   | "goods_produced"
+  | "goods_collected"
   | "business_supplied"
+  | "coins_collected"
+  | "order_completed"
+  | "franchise_supply"
   | "decoration_placed"
-  | "franchise_opened";
+  | "expansion_claimed";
 
 export type QuestDefinition = {
   readonly id: string;
@@ -15,7 +19,11 @@ export type QuestDefinition = {
     readonly filter: Readonly<Record<string, string>>;
     readonly amount: number;
   }[];
-  readonly reward: { readonly coins: number; readonly xp: number };
+  readonly reward: {
+    readonly coins: number;
+    readonly xp: number;
+    readonly decorationId?: "D-003";
+  };
   readonly canExpire: false;
   readonly canPurchaseSkip: false;
 };
@@ -69,8 +77,16 @@ export const QUESTS: readonly QuestDefinition[] = [
     nameKey: "quest.flower_street.title",
     track: "story",
     prerequisites: ["quest_early_bakery_01"],
-    steps: [{ event: "decoration_placed", filter: { decoration_definition_id: "D-007" }, amount: 4 }],
-    reward: { coins: 100, xp: 20 },
+    steps: [
+      { event: "building_placed", filter: { building_definition_id: "B-001" }, amount: 1 },
+      { event: "goods_produced", filter: { good_id: "GOOD_WHEAT" }, amount: 3 },
+      { event: "goods_produced", filter: { good_id: "GOOD_BREAD" }, amount: 3 },
+      { event: "business_supplied", filter: { building_definition_id: "B-004" }, amount: 1 },
+      { event: "coins_collected", filter: {}, amount: 1 },
+      { event: "franchise_supply", filter: {}, amount: 1 },
+      { event: "decoration_placed", filter: {}, amount: 1 },
+    ],
+    reward: { coins: 300, xp: 60, decorationId: "D-003" },
     canExpire: false,
     canPurchaseSkip: false,
   },
@@ -79,8 +95,8 @@ export const QUESTS: readonly QuestDefinition[] = [
     nameKey: "quest.dana_franchise.title",
     track: "story",
     prerequisites: ["quest_tutorial_grocery"],
-    steps: [{ event: "franchise_opened", filter: { host_city_id: "NPC-CITY-DANA" }, amount: 1 }],
-    reward: { coins: 100, xp: 100 },
+    steps: [{ event: "franchise_supply", filter: { host_city_id: "NPC-CITY-DANA" }, amount: 1 }],
+    reward: { coins: 100, xp: 25 },
     canExpire: false,
     canPurchaseSkip: false,
   },

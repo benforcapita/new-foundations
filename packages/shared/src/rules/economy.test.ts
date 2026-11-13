@@ -59,6 +59,7 @@ test("grocery pays 110 coins per 600 second cycle before bonuses", () => {
   expect(
     businessReward({ baseCoins: 110, level: 2, decorationBoost: 0.2, roadBonus: 0.05 }),
   ).toBe(Math.floor(110 * 1.25 * 1.25));
+  expect(businessReward({ baseCoins: 25, level: 1, decorationBoost: 0.11, roadBonus: 0.05 })).toBe(29);
 });
 
 test("passive rent is capped at 12 hours of cycles", () => {

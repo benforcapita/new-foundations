@@ -1,3 +1,4 @@
+import manifest from "../../../../assets/asset_manifest.json" with { type: "json" };
 import { AGRICULTURE } from "./agriculture";
 import { BUILDINGS } from "./buildings";
 import { DECORATIONS } from "./decorations";
@@ -9,6 +10,8 @@ import { ORDER_TEMPLATES, RECOVERY_ORDER } from "./orders";
 import { QUESTS } from "./quests";
 import { RECIPES } from "./recipes";
 import { ROAD } from "./roads";
+
+const MANIFEST_ASSET_IDS = new Set(manifest.assets.map((entry) => entry.name));
 
 export type CatalogNameRef = {
   readonly nameKey: string;
@@ -53,40 +56,35 @@ export function catalogNameRefs(): readonly CatalogNameRef[] {
   return refs;
 }
 
+function collectManifestIds(value: unknown, into: Set<string>): void {
+  if (typeof value === "string") {
+    if (MANIFEST_ASSET_IDS.has(value)) {
+      into.add(value);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectManifestIds(item, into);
+    }
+    return;
+  }
+  if (typeof value === "object" && value !== null) {
+    const record = value as Record<string, unknown>;
+    if (record.contentPhase === "later") {
+      return;
+    }
+    for (const child of Object.values(record)) {
+      collectManifestIds(child, into);
+    }
+  }
+}
+
+/** Every manifest asset id stored on a Phase 0/1 catalog value, including fields added later. */
 export function phase01AssetIds(): readonly string[] {
   const ids = new Set<string>();
-  for (const building of BUILDINGS) {
-    if (building.contentPhase !== "later") {
-      ids.add(building.assetId);
-    }
-  }
-  for (const plot of AGRICULTURE) {
-    if (plot.contentPhase === "later") {
-      continue;
-    }
-    ids.add(plot.groundAssetId);
-    ids.add(plot.overlayAssetId);
-    if (plot.propAssetId !== undefined) {
-      ids.add(plot.propAssetId);
-    }
-  }
-  for (const good of GOODS) {
-    if (good.contentPhase !== "later") {
-      ids.add(good.iconAssetId);
-    }
-  }
-  for (const decoration of DECORATIONS) {
-    if (decoration.contentPhase !== "later" && decoration.assetId !== undefined) {
-      ids.add(decoration.assetId);
-    }
-  }
-  if (ROAD.contentPhase !== "later") {
-    for (const assetId of Object.values(ROAD.tiles)) {
-      ids.add(assetId);
-    }
-  }
-  for (const assetId of Object.values(TERRAIN_ASSETS)) {
-    ids.add(assetId);
+  for (const catalog of [BUILDINGS, AGRICULTURE, GOODS, RECIPES, DECORATIONS, ROAD, TERRAIN_ASSETS, NPCS, NPC_CITIES, QUESTS]) {
+    collectManifestIds(catalog, ids);
   }
   return [...ids];
 }

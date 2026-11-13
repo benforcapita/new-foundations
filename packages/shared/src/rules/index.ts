@@ -70,6 +70,8 @@ export {
 export {
   BUILDING_STATES,
   BUILDING_TRANSITIONS,
+  FRANCHISE_SHIPMENT_STATES,
+  FRANCHISE_SHIPMENT_TRANSITIONS,
   FRANCHISE_STATES,
   FRANCHISE_TRANSITIONS,
   IllegalTransitionError,
@@ -77,8 +79,10 @@ export {
   TRAIN_TRANSITIONS,
   transitionBuilding,
   transitionFranchise,
+  transitionFranchiseShipment,
   transitionTrain,
   type BuildingState,
+  type FranchiseShipmentState,
   type FranchiseState,
   type TrainState,
 } from "./stateMachines";

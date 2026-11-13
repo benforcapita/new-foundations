@@ -105,13 +105,20 @@ export function roadBonusFor(footprint: FootprintRect, roads: readonly { readonl
   return 0;
 }
 
+const LEVEL_MULTIPLIER_BPS = [100, 125, 150] as const;
+
 export function businessReward(input: {
   readonly baseCoins: number;
   readonly level: BuildingLevel;
   readonly decorationBoost: number;
   readonly roadBonus: number;
 }): number {
-  return Math.floor(input.baseCoins * levelMultiplier(input.level) * (1 + input.decorationBoost + input.roadBonus));
+  const levelBps = LEVEL_MULTIPLIER_BPS[input.level - 1];
+  if (levelBps === undefined) {
+    throw new Error("building level must be 1, 2, or 3");
+  }
+  const bonusBps = Math.round((input.decorationBoost + input.roadBonus) * 10_000);
+  return Math.floor((input.baseCoins * levelBps * (10_000 + bonusBps)) / 1_000_000);
 }
 
 export function orderReward(

@@ -26,43 +26,53 @@ export const FRANCHISE_STATES = [
   "ACCEPTED",
   "ACTIVE",
   "PAUSED",
+  "DECLINED",
+  "EXPIRED",
   "TERMINATED",
-  "SUPPLIED",
-  "EARNING",
-  "READY",
-  "SETTLED",
 ] as const;
 
 export type FranchiseState = (typeof FRANCHISE_STATES)[number];
 
 export const FRANCHISE_TRANSITIONS: { readonly [State in FranchiseState]: readonly FranchiseState[] } = {
   DRAFT: ["REQUESTED"],
-  REQUESTED: ["ACCEPTED"],
+  REQUESTED: ["ACCEPTED", "DECLINED", "EXPIRED"],
   ACCEPTED: ["ACTIVE"],
-  ACTIVE: ["PAUSED", "TERMINATED", "SUPPLIED"],
+  ACTIVE: ["PAUSED", "TERMINATED"],
   PAUSED: ["ACTIVE"],
+  DECLINED: [],
+  EXPIRED: [],
   TERMINATED: [],
+};
+
+export const FRANCHISE_SHIPMENT_STATES = ["SUPPLIED", "EARNING", "READY", "SETTLED"] as const;
+
+export type FranchiseShipmentState = (typeof FRANCHISE_SHIPMENT_STATES)[number];
+
+export const FRANCHISE_SHIPMENT_TRANSITIONS: {
+  readonly [State in FranchiseShipmentState]: readonly FranchiseShipmentState[];
+} = {
   SUPPLIED: ["EARNING"],
   EARNING: ["READY"],
   READY: ["SETTLED"],
-  SETTLED: ["ACTIVE"],
+  SETTLED: [],
 };
 
-export const TRAIN_STATES = ["LOADING", "IN_TRANSIT"] as const;
+export const TRAIN_STATES = ["LOADING", "IN_TRANSIT", "ARRIVED"] as const;
 
 export type TrainState = (typeof TRAIN_STATES)[number];
 
 export const TRAIN_TRANSITIONS: { readonly [State in TrainState]: readonly TrainState[] } = {
   LOADING: ["IN_TRANSIT"],
-  IN_TRANSIT: ["LOADING"],
+  IN_TRANSIT: ["ARRIVED"],
+  ARRIVED: ["LOADING"],
 };
 
 export class IllegalTransitionError extends Error {
-  readonly machine: "building" | "franchise" | "train";
+  readonly machine: "building" | "franchise" | "shipment" | "train";
   readonly from: string;
   readonly to: string;
 
-  constructor(machine: "building" | "franchise" | "train", from: string, to: string) {
+  constructor(machine: "building" | "franchise" | "shipment" | "train", from: string, to: string) {
     super(`illegal ${machine} transition ${from} -> ${to}`);
     this.name = "IllegalTransitionError";
     this.machine = machine;
@@ -72,7 +82,7 @@ export class IllegalTransitionError extends Error {
 }
 
 function move<State extends string>(
-  machine: "building" | "franchise" | "train",
+  machine: "building" | "franchise" | "shipment" | "train",
   table: { readonly [Key in State]: readonly State[] },
   from: State,
   to: State,
@@ -90,6 +100,10 @@ export function transitionBuilding(from: BuildingState, to: BuildingState): Buil
 
 export function transitionFranchise(from: FranchiseState, to: FranchiseState): FranchiseState {
   return move("franchise", FRANCHISE_TRANSITIONS, from, to);
+}
+
+export function transitionFranchiseShipment(from: FranchiseShipmentState, to: FranchiseShipmentState): FranchiseShipmentState {
+  return move("shipment", FRANCHISE_SHIPMENT_TRANSITIONS, from, to);
 }
 
 export function transitionTrain(from: TrainState, to: TrainState): TrainState {

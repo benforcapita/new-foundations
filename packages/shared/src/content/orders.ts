@@ -1,6 +1,6 @@
 import { type GoodId, type GoodStack } from "./ids";
 
-export type OrderDifficulty = "easy" | "medium" | "specialized";
+export type OrderDifficulty = "easy" | "medium" | "specialized" | "story" | "recovery";
 
 export type OrderTemplate = {
   readonly id: string;
@@ -8,9 +8,29 @@ export type OrderTemplate = {
   readonly difficulty: OrderDifficulty;
   readonly unlockLevel: number;
   readonly requirements: readonly GoodStack[];
+  readonly reward?: { readonly coins: number; readonly xp: number };
 };
 
 export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
+  {
+    id: "ORD-T-001",
+    nameKey: "order.seed_bread.name",
+    difficulty: "story",
+    unlockLevel: 1,
+    requirements: [{ goodId: "GOOD_BREAD", qty: 3 }],
+    reward: { coins: 180, xp: 12 },
+  },
+  {
+    id: "ORD-T-002",
+    nameKey: "order.seed_planks.name",
+    difficulty: "story",
+    unlockLevel: 4,
+    requirements: [
+      { goodId: "GOOD_PLANKS", qty: 2 },
+      { goodId: "GOOD_BREAD", qty: 1 },
+    ],
+    reward: { coins: 325, xp: 25 },
+  },
   {
     id: "ORD-EASY-BREAD",
     nameKey: "order.easy_bread.name",
@@ -65,7 +85,7 @@ export const ORDER_GENERATOR = {
 export const RECOVERY_ORDER = {
   id: "ORD-RECOVERY",
   nameKey: "order.recovery.name",
-  difficulty: "easy",
+  difficulty: "recovery",
   coinThreshold: 180,
   requirements: [{ goodId: "GOOD_WHEAT", qty: 3 }],
   coins: 60,

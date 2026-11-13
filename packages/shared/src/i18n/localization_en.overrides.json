@@ -55,6 +55,8 @@
   "level.15.name": "Level 15",
   "quest.early_bakery.title": "Bake the First Bread",
   "quest.dana_franchise.title": "Open a Grocery Branch in Dana's City",
+  "order.seed_bread.name": "Bread Delivery",
+  "order.seed_planks.name": "Planks and Bread Delivery",
   "order.easy_bread.name": "Bread for the Grocery",
   "order.medium_planks.name": "Planks and Bread",
   "order.medium_cheese.name": "Cheese Order",

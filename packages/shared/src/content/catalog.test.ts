@@ -373,6 +373,7 @@ test("decorations D-001 through D-007 and landmark LM-001 use tunable boosts", (
   for (const decoration of streets) {
     expect(decoration.boost).toBe(0.01);
     expect(decoration.radius).toBe(2);
+    expect(decoration.unlockLevel).toBe(4);
     expect(decoration.footprint).toEqual({ width: 1, height: 1 });
   }
   expect(DECORATIONS.find((decoration) => decoration.id === "LM-001")).toMatchObject({
@@ -381,7 +382,12 @@ test("decorations D-001 through D-007 and landmark LM-001 use tunable boosts", (
     unlockLevel: 15,
     boost: 0.03,
     radius: 3,
-    contentPhase: "later",
+    contentPhase: "p1",
+    parts: [
+      { assetId: "tile_plaza", role: "ground", count: 16 },
+      { assetId: "deco_fountain", role: "centre", count: 1 },
+      { assetId: "deco_lamp", role: "lamp", count: 4 },
+    ],
   });
 });
 
@@ -405,11 +411,20 @@ test("levels L1 through L15 carry the cumulative XP thresholds", () => {
     50, 120, 220, 350, 500, 700, 950, 1250, 1600, 2000, 2450, 2950, 3500, 4100, null,
   ]);
   expect(LEVELS[14]?.unlocks).toContain("LM-001");
-  expect(LEVELS[0]?.unlocks).toEqual(expect.arrayContaining(["B-001", "B-004", "B-007", "AG-001"]));
-  expect(LEVELS[2]?.unlocks).toContain("B-011");
-  expect(LEVELS[3]?.unlocks).toEqual(expect.arrayContaining(["B-002", "B-008", "B-012", "AG-002"]));
+  expect(LEVELS[0]?.unlocks).toEqual(expect.arrayContaining(["B-001", "B-004", "B-007", "AG-001", "R-001", "order-board"]));
+  expect(LEVELS[2]?.unlocks).toEqual(expect.arrayContaining(["B-011", "NPC-TOM"]));
+  expect(LEVELS[3]?.unlocks).toEqual(
+    expect.arrayContaining(["B-002", "B-008", "B-012", "AG-002", "D-001", "D-007", "NPC-AMIR"]),
+  );
+  expect(LEVELS[4]?.unlocks).toEqual(expect.arrayContaining(["medium-orders", "queue-slot-3", "GOOD_CHEESE"]));
   expect(LEVELS[8]?.unlocks).toContain("B-003");
   expect(LEVELS[9]?.unlocks).toEqual(expect.arrayContaining(["B-006", "AG-004", "GOOD_BOOKS"]));
+  expect(LEVELS[9]?.unlocks).not.toContain("human-franchises");
+  expect(LEVELS[10]?.unlocks).toEqual(["warehouse-tier-4", "warehouse-tier-5"]);
+  expect(LEVELS[11]?.unlocks).not.toContain("harbor");
+  expect(LEVELS[11]?.reward).toEqual({ coins: 500, civicStars: 1 });
+  expect(LEVELS[12]?.unlocks).toEqual(["specialized-order-weight"]);
+  expect(LEVELS[13]?.unlocks).toEqual(["building-level-3"]);
 });
 
 test("quests, orders, and NPCs cover the starter loop", () => {
@@ -431,7 +446,32 @@ test("quests, orders, and NPCs cover the starter loop", () => {
       { event: "goods_produced", filter: { good_id: "GOOD_BREAD" }, amount: 3 },
     ],
   });
-  expect(QUESTS.find((quest) => quest.id === "quest_flower_street")?.nameKey).toBe("quest.flower_street.title");
+  expect(QUESTS.find((quest) => quest.id === "quest_flower_street")).toMatchObject({
+    nameKey: "quest.flower_street.title",
+    reward: { coins: 300, xp: 60, decorationId: "D-003" },
+    steps: [
+      { event: "building_placed", amount: 1 },
+      { event: "goods_produced", filter: { good_id: "GOOD_WHEAT" }, amount: 3 },
+      { event: "goods_produced", filter: { good_id: "GOOD_BREAD" }, amount: 3 },
+      { event: "business_supplied", amount: 1 },
+      { event: "coins_collected", amount: 1 },
+      { event: "franchise_supply", amount: 1 },
+      { event: "decoration_placed", amount: 1 },
+    ],
+  });
+  expect(QUESTS.find((quest) => quest.id === "quest_dana_franchise")?.reward).toEqual({ coins: 100, xp: 25 });
+
+  expect(ORDER_TEMPLATES.find((template) => template.id === "ORD-T-001")).toMatchObject({
+    requirements: [{ goodId: "GOOD_BREAD", qty: 3 }],
+    reward: { coins: 180, xp: 12 },
+  });
+  expect(ORDER_TEMPLATES.find((template) => template.id === "ORD-T-002")).toMatchObject({
+    requirements: [
+      { goodId: "GOOD_PLANKS", qty: 2 },
+      { goodId: "GOOD_BREAD", qty: 1 },
+    ],
+    reward: { coins: 325, xp: 25 },
+  });
 
   expect(ORDER_GENERATOR).toMatchObject({
     boardSize: 3,

@@ -34,15 +34,16 @@ export function screenToGrid(sx: number, sy: number, originX = 0, originY = 0): 
   };
 }
 
-/** South corner of a footprint: the cell with the greatest screen Y. */
+/** Grid corner (x+w, y+h): the footprint's bottom vertex, one cell past the south tile. */
 export function getFootprintAnchor(x: number, y: number, width: number, height: number): GridPoint {
-  return { gx: x + width - 1, gy: y + height - 1 };
+  return { gx: x + width, gy: y + height };
 }
 
-/** Painter key. A larger depth is closer to the camera and draws in front. */
+/** Painter key. Row sum breaks ties so (0, 4) and (4, 0) do not share a depth. */
 export function getBuildingDepth(x: number, y: number, width: number, height: number): number {
-  const anchor = getFootprintAnchor(x, y, width, height);
-  return anchor.gx + anchor.gy;
+  const southX = x + width - 1;
+  const southY = y + height - 1;
+  return (southX + southY) * 1000 + southX;
 }
 
 export function chebyshevFootprints(left: FootprintRect, right: FootprintRect): number {

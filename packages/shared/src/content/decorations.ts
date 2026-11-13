@@ -12,6 +12,11 @@ export type DecorationDefinition = {
   readonly radius: number;
   readonly contentPhase: ContentPhase;
   readonly assetId?: string;
+  readonly parts?: readonly {
+    readonly assetId: string;
+    readonly role: "ground" | "centre" | "lamp";
+    readonly count: number;
+  }[];
 };
 
 export const DECORATIONS: readonly DecorationDefinition[] = [
@@ -22,7 +27,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p0",
@@ -34,7 +39,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p1",
@@ -46,7 +51,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p1",
@@ -58,7 +63,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p1",
@@ -70,7 +75,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p1",
@@ -82,7 +87,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p1",
@@ -94,7 +99,7 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     footprint: { width: 1, height: 1 },
     cost: { coins: 0 },
     buildSeconds: 0,
-    unlockLevel: 1,
+    unlockLevel: 4,
     boost: STREET_DECORATION.boost,
     radius: STREET_DECORATION.radius,
     contentPhase: "p1",
@@ -108,7 +113,12 @@ export const DECORATIONS: readonly DecorationDefinition[] = [
     unlockLevel: 15,
     boost: LANDMARK_DECORATION.boost,
     radius: LANDMARK_DECORATION.radius,
-    contentPhase: "later",
+    contentPhase: "p1",
+    parts: [
+      { assetId: "tile_plaza", role: "ground", count: 16 },
+      { assetId: "deco_fountain", role: "centre", count: 1 },
+      { assetId: "deco_lamp", role: "lamp", count: 4 },
+    ],
   },
 ];
 
