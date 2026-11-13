@@ -1,0 +1,68 @@
+import { expect, test } from "@playwright/test";
+import { gridToScreen } from "@nf/shared";
+import { MAP_ORIGIN_X, MAP_ORIGIN_Y } from "../src/game/layout";
+
+test("catalog, warehouse, collection and keyboard shortcut use the live city", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  await expect(page.getByTestId("collect-all")).toBeEnabled();
+  await page.getByTestId("build-catalog-open").click();
+  await expect(page.getByTestId("catalog-lock-B-011")).toContainText("level 3");
+  await expect(page.getByTestId("catalog-item-B-011").getByRole("button")).toBeDisabled();
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.getByTestId("aim-x").fill("c");
+  await expect(page.getByTestId("collect-all")).toBeEnabled();
+  await page.getByTestId("collect-all").click();
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("collect-all")).toBeDisabled();
+  await page.getByRole("button", { name: /Warehouse/ }).click();
+  await expect(page.getByTestId("warehouse-panel")).toContainText("GOOD_WHEAT");
+  await expect(page.getByTestId("warehouse-panel")).toContainText("GOOD_BREAD");
+});
+
+test("selecting a plot opens its details", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  const plot = await page.evaluate(async () => {
+    const token = localStorage.getItem("nf_session_token");
+    const response = await fetch("/v1/cities/current", { headers: { Authorization: `Bearer ${token}` } });
+    const snapshot = await response.json() as { buildings: { definitionId: string; x: number; y: number }[] };
+    return snapshot.buildings.find(b => b.definitionId === "AG-001");
+  });
+  if (!plot) throw new Error("Missing starter plot");
+  const world = gridToScreen(plot.x + 0.5, plot.y + 0.5, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+  await page.getByTestId("aim-x").fill(String(world.x));
+  await page.getByTestId("aim-y").fill(String(world.y));
+  await page.getByTestId("aim-go").click();
+  const box = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
+  if (!box) throw new Error("Missing canvas");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId("building-details")).toContainText("AG-001");
+  await page.getByTestId("details-collect").click();
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await page.keyboard.press("c");
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("collect-all")).toBeDisabled();
+  await page.getByTestId("details-move").click();
+  const destination = gridToScreen(0.5, 6.5, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+  await page.getByTestId("aim-x").fill(String(destination.x));
+  await page.getByTestId("aim-y").fill(String(destination.y));
+  await page.getByTestId("aim-go").click();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId("ghost-cell")).toHaveText("0,6");
+  await expect(page.getByTestId("ghost-tone")).toHaveText("valid");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(1);
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes");
+  const movedBox = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
+  if (!movedBox) throw new Error("Missing moved canvas");
+  await page.mouse.click(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2);
+  await expect(page.getByTestId("building-details")).toBeVisible();
+  await page.getByTestId("details-remove").click();
+  await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await page.getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("city-building").filter({ hasText: "AG-001 0,6" })).toHaveCount(1);
+});

@@ -1,0 +1,7 @@
+import { AGRICULTURE, BUILDINGS } from "@nf/shared";
+import type { Snapshot } from "@nf/shared/schemas";
+export const hasReady = (snapshot: Snapshot | null) => snapshot?.buildings.some(b => b.state === "READY_TO_COLLECT") ?? false;
+export function catalogAvailability(snapshot: Snapshot, definition: typeof BUILDINGS[number] | typeof AGRICULTURE[number]) {
+  const free = "firstFree" in definition && definition.firstFree && !snapshot.buildings.some(b => b.definitionId === definition.id);
+  return { locked: snapshot.city.level < definition.unlockLevel, affordable: free || snapshot.city.coins >= definition.cost.coins, cost: free ? 0 : definition.cost.coins };
+}

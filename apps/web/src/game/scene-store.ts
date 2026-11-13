@@ -1,4 +1,4 @@
-import type { BuildingId, QuarterTurns } from "@nf/shared";
+import type { AgricultureId, BuildingId, QuarterTurns } from "@nf/shared";
 import { create } from "zustand";
 import { cycleRotation } from "./ghost";
 import type { LodMode } from "./lod";
@@ -57,6 +57,8 @@ type SceneState = {
   readonly overlays: readonly OverlayReadout[];
   readonly ghost: GhostReadout;
   readonly error: string;
+  readonly selectedId: string | null;
+  readonly moveId: string | null;
   readonly cropOffset: number;
   readonly aim: { readonly x: number; readonly y: number; readonly zoom: number; readonly nonce: number } | null;
   publish: (patch: Partial<Omit<SceneState, "publish" | "aimAt">>) => void;
@@ -77,6 +79,8 @@ export const useSceneStore = create<SceneState>((set) => ({
   overlays: [],
   ghost: IDLE_GHOST,
   error: "",
+  selectedId: null,
+  moveId: null,
   cropOffset: 0,
   aim: null,
   publish: (patch) => {
@@ -88,9 +92,9 @@ export const useSceneStore = create<SceneState>((set) => ({
 }));
 
 type PlacementState = {
-  readonly catalogId: BuildingId | null;
+  readonly catalogId: BuildingId | AgricultureId | null;
   readonly rotation: QuarterTurns;
-  select: (catalogId: BuildingId) => void;
+  select: (catalogId: BuildingId | AgricultureId) => void;
   cancel: () => void;
   rotate: () => void;
 };

@@ -18,7 +18,7 @@ export default defineConfig({
     },
   },
   preview: {
-    proxy: { "/v1": "http://127.0.0.1:3001" },
+    proxy: { "/v1": `http://127.0.0.1:${process.env.NF_TEST_API_PORT ?? "3001"}` },
     host: "127.0.0.1",
     port: 4173,
     strictPort: true,
