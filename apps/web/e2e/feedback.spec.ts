@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("showcase badges, level up, settings and target sizes", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?demo=1");
   for (const [id, name, role, color] of [["mia", "Mia", "Civic Engineer", "#2C9D8F"], ["dana", "Dana", "Merchant", "#D98669"], ["tom", "Tom", "Station Manager", "#3B8392"], ["amir", "Amir", "Gardener", "#5A9B79"]] as const) {
     const badge = page.getByTestId(`npc-badge-${id}`);
     await expect(badge).toContainText(name); await expect(badge).toContainText(role); await expect(badge).toContainText("NPC");
@@ -18,7 +18,7 @@ test("showcase badges, level up, settings and target sizes", async ({ page }) =>
   }
 });
 test("reduced motion announces cues without animation", async ({ page }) => {
-  await page.emulateMedia({ reducedMotion: "reduce" }); await page.goto("/");
+  await page.emulateMedia({ reducedMotion: "reduce" }); await page.goto("/?demo=1");
   await expect(page.getByTestId("reduced-motion")).toHaveText("reduce");
   await page.getByTestId("vfx-trigger-collect").click();
   expect(await page.locator(".coin-flight").count()).toBe(0);
@@ -27,7 +27,7 @@ test("reduced motion announces cues without animation", async ({ page }) => {
 
 test("collect animates without reduced motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
-  await page.goto("/");
+  await page.goto("/?demo=1");
   await page.getByTestId("vfx-trigger-collect").click();
   expect(await page.locator(".coin-flight").count()).toBeGreaterThan(0);
 });
