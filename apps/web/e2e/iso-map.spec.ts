@@ -1,13 +1,21 @@
-import { gridToScreen } from "@nf/shared";
+import { getAssetMeta, gridToScreen } from "@nf/shared";
 import { expect, test, type Page } from "@playwright/test";
-import { MAP_ORIGIN_X, MAP_ORIGIN_Y } from "../src/game/layout";
-import { visibleArtTop } from "../src/game/spriteArt";
+import { resolve } from "node:path";
 import {
   GHOST_BLOCKED_CELL,
   GHOST_HINT_CLEAR_CELL,
   GHOST_OCCUPIED_CELL,
   GHOST_VALID_CELL,
 } from "../src/game/demoCity";
+import {
+  decodePng,
+  foreignOpaqueTexels,
+  repoRoot,
+  type RgbaImage,
+  type SpriteFrame,
+  type WorldRect,
+} from "../src/game/labelOcclusion";
+import { MAP_ORIGIN_X, MAP_ORIGIN_Y } from "../src/game/layout";
 
 type Rgb = { readonly r: number; readonly g: number; readonly b: number };
 
@@ -16,9 +24,6 @@ declare global {
     __nfPaintLatency?: Promise<number>;
   }
 }
-
-const LABEL_DISPLAY = 256;
-const LABEL_SOURCE = 512;
 
 async function openCity(page: Page): Promise<void> {
   await page.goto("/");
@@ -231,13 +236,31 @@ test("placement ghost tracks the pointer, explains blocks, and rotates the stati
   await expect(page.getByTestId("ghost-tone")).toHaveText("idle");
 });
 
-function labelSample(x: number, y: number, opaqueRow: number): { readonly roof: { x: number; y: number }; readonly frame: { x: number; y: number } } {
-  const anchor = gridToScreen(x + 2, y + 2, MAP_ORIGIN_X, MAP_ORIGIN_Y);
-  const artTop = visibleArtTop(anchor.y, LABEL_DISPLAY, 1, LABEL_SOURCE, opaqueRow);
-  return {
-    roof: { x: anchor.x + 8, y: artTop - 12 },
-    frame: { x: anchor.x + 8, y: anchor.y - LABEL_DISPLAY - 24 },
-  };
+function parseBox(value: string | null): WorldRect | null {
+  if (value === null || value === "") {
+    return null;
+  }
+  const parts = value.split(",").map(Number);
+  const x = parts[0];
+  const y = parts[1];
+  const width = parts[2];
+  const height = parts[3];
+  if (x === undefined || y === undefined || width === undefined || height === undefined || parts.some((part) => !Number.isFinite(part))) {
+    throw new Error(`bad overlay box ${value}`);
+  }
+  return { x, y, width, height };
+}
+
+function buildingImages(frames: readonly SpriteFrame[]): Map<string, RgbaImage> {
+  const root = repoRoot();
+  const images = new Map<string, RgbaImage>();
+  for (const frame of frames) {
+    if (images.has(frame.assetId)) {
+      continue;
+    }
+    images.set(frame.assetId, decodePng(resolve(root, getAssetMeta(frame.assetId).path)));
+  }
+  return images;
 }
 
 async function creamPixels(page: Page): Promise<number> {
@@ -269,18 +292,28 @@ async function creamPixels(page: Page): Promise<number> {
 test("state overlays collapse to status dots below zoom 0.9", async ({ page }) => {
   await openCity(page);
   await expect(page.getByTestId("overlay-cottage-build")).toHaveText("Under Construction");
-  const labels = [
-    { id: "cottage-build", x: 1, y: 1, opaqueRow: 199 },
-    { id: "grocery", x: 9, y: 6, opaqueRow: 199 },
-    { id: "bakery", x: 9, y: 9, opaqueRow: 199 },
-    { id: "cottage-ready", x: 12, y: 12, opaqueRow: 199 },
-  ];
-  for (const label of labels) {
-    const sample = labelSample(label.x, label.y, label.opaqueRow);
-    await aimWorld(page, sample.roof.x, sample.roof.y, 2);
-    expect(await creamPixels(page), `${label.id} roof`).toBeGreaterThanOrEqual(8);
-    await aimWorld(page, sample.frame.x, sample.frame.y, 2);
-    expect(await creamPixels(page), `${label.id} frame`).toBe(0);
+  const frames = JSON.parse(await page.getByTestId("sprite-frames").innerText()) as SpriteFrame[];
+  const images = buildingImages(frames);
+  const labeled = ["cottage-build", "grocery", "bakery", "cottage-ready"];
+  for (const id of labeled) {
+    const frame = frames.find((entry) => entry.id === id);
+    if (frame === undefined) {
+      throw new Error(`missing sprite ${id}`);
+    }
+    const labelBox = parseBox(await page.getByTestId(`overlay-${id}`).getAttribute("data-label-box"));
+    const iconBox = parseBox(await page.getByTestId(`overlay-${id}`).getAttribute("data-icon-box"));
+    if (labelBox === null) {
+      throw new Error(`${id} has no label box`);
+    }
+    expect(foreignOpaqueTexels(labelBox, frames, images, id), `${id} label`).toBe(0);
+    if (iconBox !== null) {
+      expect(foreignOpaqueTexels(iconBox, frames, images, id), `${id} icon`).toBe(0);
+    }
+    await aimWorld(page, labelBox.x + 6, labelBox.y + 6, 2);
+    expect(await creamPixels(page), `${id} roof`).toBeGreaterThanOrEqual(8);
+    const frameTop = frame.y - frame.displayHeight * frame.originY;
+    await aimWorld(page, frame.x + 8, frameTop - 24, 2);
+    expect(await creamPixels(page), `${id} frame`).toBe(0);
   }
   await aimWorld(page, 1536, 624, 1);
   await expect(page.getByTestId("overlay-grocery")).toHaveText("Needs Supply");

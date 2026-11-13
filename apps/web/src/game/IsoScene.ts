@@ -26,7 +26,7 @@ import { MAP_ORIGIN_X, MAP_ORIGIN_Y, anchorScreen, cellCenter, diamondPoints, di
 import { overlayColor, overlayForState } from "./overlays";
 import { plotPresentation } from "./plots";
 import { IDLE_GHOST, usePlacementStore, useSceneStore, type OverlayReadout } from "./scene-store";
-import { firstOpaqueRow, labelTopRow, visibleArtTop } from "./spriteArt";
+import { roofBodyRow, visibleArtTop } from "./spriteArt";
 
 type Badge = {
   readonly id: string;
@@ -126,6 +126,11 @@ function paintDiamond(
   graphics.strokePath();
 }
 
+function worldBox(object: { getBounds(): Phaser.Geom.Rectangle }): string {
+  const bounds = object.getBounds();
+  return [bounds.x, bounds.y, bounds.width, bounds.height].map((value) => value.toFixed(1)).join(",");
+}
+
 function opaqueRowOf(texture: Phaser.Textures.Texture): number {
   const source = texture.getSourceImage() as CanvasImageSource & { width?: number; height?: number };
   const width = source.width ?? 0;
@@ -142,7 +147,7 @@ function opaqueRowOf(texture: Phaser.Textures.Texture): number {
   }
   context.drawImage(source, 0, 0);
   const { data } = context.getImageData(0, 0, width, height);
-  return firstOpaqueRow(width, height, (x, y) => data[(y * width + x) * 4 + 3] ?? 0);
+  return roofBodyRow(width, height, (x, y) => data[(y * width + x) * 4 + 3] ?? 0);
 }
 
 export class IsoScene extends Phaser.Scene {
@@ -522,7 +527,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private artTop(image: Phaser.GameObjects.Image): number {
-    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, labelTopRow(image.texture.key, this.opaqueRow(image.texture.key)));
+    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, this.opaqueRow(image.texture.key));
   }
 
   private opaqueRow(key: string): number {
@@ -654,9 +659,26 @@ export class IsoScene extends Phaser.Scene {
         text: badge.labelText,
         kind: mode === "collapsed" ? "dot" : "full",
         label: badge.labelText,
+        labelBox: badge.label === null || !badge.label.visible ? "" : worldBox(badge.label),
+        iconBox: badge.icon === null || !badge.icon.visible ? "" : worldBox(badge.icon),
       });
     }
     useSceneStore.getState().publish({ overlays: readouts, lod: mode, districtList: mode === "collapsed" });
+  }
+
+  private spriteFramePayload(): string {
+    return JSON.stringify(
+      this.buildingSprites.map((entry) => ({
+        id: entry.id,
+        assetId: entry.image.texture.key,
+        x: entry.image.x,
+        y: entry.image.y,
+        displayWidth: entry.image.displayWidth,
+        displayHeight: entry.image.displayHeight,
+        originX: entry.image.originX,
+        originY: entry.image.originY,
+      })),
+    );
   }
 
   private spriteDepthOrder(): string {
@@ -675,6 +697,7 @@ export class IsoScene extends Phaser.Scene {
       ready: false,
       reducedMotion: this.reducedMotion,
       depthOrder: order,
+      spriteFrames: this.spriteFramePayload(),
       mapSize: `${STARTER_MAP.width}x${STARTER_MAP.height}`,
       zoom: this.cameras.main.zoom,
       lod: "detailed",

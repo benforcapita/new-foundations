@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { firstOpaqueRow, visibleArtTop } from "./spriteArt";
+import { firstOpaqueRow, roofBodyRow, visibleArtTop } from "./spriteArt";
 
 test("the first opaque row skips transparent padding above the art", () => {
   const width = 4;
@@ -12,6 +12,23 @@ test("the first opaque row skips transparent padding above the art", () => {
   ];
   expect(firstOpaqueRow(width, height, (x, y) => alpha[y]?.[x] ?? 0)).toBe(2);
   expect(firstOpaqueRow(2, 2, () => 0)).toBe(0);
+});
+
+test("a thin chimney does not pull the label above the roof body", () => {
+  const width = 20;
+  const height = 10;
+  const alphaAt = (x: number, y: number): number => {
+    if (y < 6 && x >= 9 && x <= 10) {
+      return 255;
+    }
+    if (y >= 6) {
+      return 255;
+    }
+    return 0;
+  };
+  expect(firstOpaqueRow(width, height, alphaAt)).toBe(0);
+  expect(roofBodyRow(width, height, alphaAt)).toBe(6);
+  expect(roofBodyRow(2, 2, () => 0)).toBe(0);
 });
 
 test("status labels sit on the visible roof, not the top of the padded frame", () => {

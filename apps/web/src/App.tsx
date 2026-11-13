@@ -57,6 +57,7 @@ export function App() {
         <span data-testid="scene-ready">{scene.ready ? "yes" : "no"}</span>
         <span data-testid="map-size">{scene.mapSize}</span>
         <span data-testid="depth-order">{scene.depthOrder}</span>
+        <span data-testid="sprite-frames">{scene.spriteFrames}</span>
         <span data-testid="lod-mode">{scene.lod}</span>
         <span data-testid="zoom">{scene.zoom.toFixed(2)}</span>
         <span data-testid="camera-scroll">
@@ -79,7 +80,14 @@ export function App() {
       </section>
       <ul className="statuses" id="building-statuses" data-testid="building-statuses">
         {scene.overlays.map((overlay) => (
-          <li key={overlay.id} data-testid={`overlay-${overlay.id}`} data-kind={overlay.kind} data-label={overlay.label}>
+          <li
+            key={overlay.id}
+            data-testid={`overlay-${overlay.id}`}
+            data-kind={overlay.kind}
+            data-label={overlay.label}
+            data-label-box={overlay.labelBox}
+            data-icon-box={overlay.iconBox}
+          >
             {overlay.kind === "dot" ? "●" : overlay.text}
           </li>
         ))}

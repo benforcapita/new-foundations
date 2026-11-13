@@ -25,6 +25,8 @@ export type OverlayReadout = {
   readonly text: string;
   readonly kind: "full" | "dot";
   readonly label: string;
+  readonly labelBox: string;
+  readonly iconBox: string;
 };
 
 export const IDLE_GHOST: GhostReadout = {
@@ -48,6 +50,7 @@ type SceneState = {
   readonly districtList: boolean;
   readonly reducedMotion: boolean;
   readonly depthOrder: string;
+  readonly spriteFrames: string;
   readonly mapSize: string;
   readonly scrollX: number;
   readonly scrollY: number;
@@ -67,6 +70,7 @@ export const useSceneStore = create<SceneState>((set) => ({
   districtList: false,
   reducedMotion: false,
   depthOrder: "",
+  spriteFrames: "[]",
   mapSize: "24x24",
   scrollX: 0,
   scrollY: 0,
