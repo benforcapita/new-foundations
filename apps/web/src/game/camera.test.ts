@@ -36,12 +36,15 @@ test("zoom stays centered on the view instead of the top-left corner", () => {
 });
 
 test("arrows and WASD pan, R rotates, and Esc cancels", () => {
-  expect(cameraAction("ArrowLeft")).toEqual({ type: "pan", x: -48, y: 0 });
-  expect(cameraAction("d")).toEqual({ type: "pan", x: 48, y: 0 });
-  expect(cameraAction("W")).toEqual({ type: "pan", x: 0, y: -48 });
-  expect(cameraAction("s")).toEqual({ type: "pan", x: 0, y: 48 });
-  expect(cameraAction("r")).toEqual({ type: "rotate" });
-  expect(cameraAction("R")).toEqual({ type: "rotate" });
-  expect(cameraAction("Escape")).toEqual({ type: "cancel" });
-  expect(cameraAction("c")).toBeNull();
+  expect(cameraAction({ key: "ArrowLeft" })).toEqual({ type: "pan", x: -48, y: 0 });
+  expect(cameraAction({ key: "d" })).toEqual({ type: "pan", x: 48, y: 0 });
+  expect(cameraAction({ key: "W" })).toEqual({ type: "pan", x: 0, y: -48 });
+  expect(cameraAction({ key: "s" })).toEqual({ type: "pan", x: 0, y: 48 });
+  expect(cameraAction({ key: "r" })).toEqual({ type: "rotate" });
+  expect(cameraAction({ key: "R" })).toEqual({ type: "rotate" });
+  expect(cameraAction({ key: "Escape" })).toEqual({ type: "cancel" });
+  expect(cameraAction({ key: "c" })).toBeNull();
+  expect(cameraAction({ key: "r", ctrlKey: true })).toBeNull();
+  expect(cameraAction({ key: "r", metaKey: true })).toBeNull();
+  expect(cameraAction({ key: "R", altKey: true })).toBeNull();
 });

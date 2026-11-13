@@ -63,8 +63,18 @@ export function zoomFromPinch(startZoom: number, startDistance: number, distance
   return clampZoom(startZoom * (distance / startDistance));
 }
 
-export function cameraAction(key: string): CameraAction | null {
-  switch (key) {
+export type KeyInput = {
+  readonly key: string;
+  readonly altKey?: boolean;
+  readonly ctrlKey?: boolean;
+  readonly metaKey?: boolean;
+};
+
+export function cameraAction(input: KeyInput): CameraAction | null {
+  if (input.altKey === true || input.ctrlKey === true || input.metaKey === true) {
+    return null;
+  }
+  switch (input.key) {
     case "r":
     case "R":
       return { type: "rotate" };

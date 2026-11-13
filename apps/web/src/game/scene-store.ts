@@ -54,7 +54,10 @@ type SceneState = {
   readonly overlays: readonly OverlayReadout[];
   readonly ghost: GhostReadout;
   readonly error: string;
-  publish: (patch: Partial<Omit<SceneState, "publish">>) => void;
+  readonly cropOffset: number;
+  readonly aim: { readonly x: number; readonly y: number; readonly zoom: number; readonly nonce: number } | null;
+  publish: (patch: Partial<Omit<SceneState, "publish" | "aimAt">>) => void;
+  aimAt: (x: number, y: number, zoom: number) => void;
 };
 
 export const useSceneStore = create<SceneState>((set) => ({
@@ -70,8 +73,13 @@ export const useSceneStore = create<SceneState>((set) => ({
   overlays: [],
   ghost: IDLE_GHOST,
   error: "",
+  cropOffset: 0,
+  aim: null,
   publish: (patch) => {
     set(patch);
+  },
+  aimAt: (x, y, zoom) => {
+    set((state) => ({ aim: { x, y, zoom, nonce: (state.aim?.nonce ?? 0) + 1 } }));
   },
 }));
 

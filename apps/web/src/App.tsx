@@ -31,6 +31,21 @@ export function App() {
         <button type="button" data-testid="cancel-placement" onClick={() => cancelPlacement()}>
           Cancel
         </button>
+        <form
+          className="aim"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const data = new FormData(event.currentTarget);
+            useSceneStore.getState().aimAt(Number(data.get("x")), Number(data.get("y")), Number(data.get("zoom")));
+          }}
+        >
+          <input name="x" data-testid="aim-x" aria-label="Aim x" defaultValue="0" />
+          <input name="y" data-testid="aim-y" aria-label="Aim y" defaultValue="0" />
+          <input name="zoom" data-testid="aim-zoom" aria-label="Aim zoom" defaultValue="1" />
+          <button type="submit" data-testid="aim-go">
+            Aim
+          </button>
+        </form>
         {scene.districtList ? (
           <button type="button" data-testid="district-list-hook">
             District Building List
@@ -48,6 +63,7 @@ export function App() {
           {scene.scrollX},{scene.scrollY}
         </span>
         <span data-testid="reduced-motion">{scene.reducedMotion ? "reduce" : "no-preference"}</span>
+        <span data-testid="crop-offset">{scene.cropOffset}</span>
         <span data-testid="ghost-cell">
           {scene.ghost.x},{scene.ghost.y}
         </span>

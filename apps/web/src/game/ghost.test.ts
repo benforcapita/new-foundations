@@ -20,7 +20,7 @@ test("valid ghosts are green with an icon and text, blocked ghosts name the reas
   expect(blocked.tone).toBe("blocked");
   expect(blocked.tint).toBe(0xff6b6b);
   expect(blocked.icon).toBe("ico_ui_alert");
-  expect(blocked.text).toBe("BAD_TERRAIN, OCCUPIED");
+  expect(blocked.text).toBe("Bad terrain, Occupied");
   expect(blocked.roadHint).toBe(false);
 });
 

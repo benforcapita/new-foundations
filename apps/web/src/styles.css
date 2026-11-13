@@ -44,6 +44,16 @@ p {
   padding: 0 12px;
 }
 
+.aim {
+  display: flex;
+  gap: 8px;
+}
+
+.aim input {
+  width: 88px;
+  min-height: 44px;
+}
+
 .game-canvas {
   flex: 1;
   min-height: 360px;

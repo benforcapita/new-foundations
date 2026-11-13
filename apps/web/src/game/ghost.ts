@@ -1,4 +1,4 @@
-import type { PlaceResult, QuarterTurns } from "@nf/shared";
+import type { PlaceReason, PlaceResult, QuarterTurns } from "@nf/shared";
 
 export const GHOST_VALID_TINT = 0x7dffb3;
 export const GHOST_BLOCKED_TINT = 0xff6b6b;
@@ -16,6 +16,29 @@ export type GhostFeedback = {
   readonly reasons: readonly PlaceResult["reasons"][number][];
 };
 
+export function reasonLabel(reason: PlaceReason): string {
+  switch (reason) {
+    case "OUT_OF_BOUNDS":
+      return "Out of bounds";
+    case "CHUNK_LOCKED":
+      return "Chunk locked";
+    case "OCCUPIED":
+      return "Occupied";
+    case "BAD_TERRAIN":
+      return "Bad terrain";
+    case "LOCKED_BY_LEVEL":
+      return "Locked by level";
+    case "INSUFFICIENT_COINS":
+      return "Not enough coins";
+    case "POP_CAP":
+      return "Population cap";
+    default: {
+      const unreachable: never = reason;
+      return unreachable;
+    }
+  }
+}
+
 export function ghostFeedback(result: PlaceResult): GhostFeedback {
   if (result.ok) {
     return {
@@ -32,7 +55,7 @@ export function ghostFeedback(result: PlaceResult): GhostFeedback {
     tone: "blocked",
     tint: GHOST_BLOCKED_TINT,
     icon: "ico_ui_alert",
-    text: result.reasons.join(", "),
+    text: result.reasons.map(reasonLabel).join(", "),
     roadHint: result.roadHint,
     ok: false,
     reasons: result.reasons,

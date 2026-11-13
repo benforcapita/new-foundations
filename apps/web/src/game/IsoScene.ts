@@ -11,11 +11,9 @@ import {
 import Phaser from "phaser";
 import { bundledPngIds, resolveAssetUrl } from "./assetUrls";
 import { cropBobOffset } from "./bob";
-import { cameraAction, clampZoom, screenFromWorld, worldFromScreen, zoomFromPinch, zoomFromWheel } from "./camera";
-import type { NfDebug } from "./debug";
+import { cameraAction, clampZoom, worldFromScreen, zoomFromPinch, zoomFromWheel } from "./camera";
 import {
   demoBuildings,
-  demoDepthOrder,
   demoPlacementCity,
   demoPlots,
   demoRoadTiles,
@@ -155,6 +153,9 @@ export class IsoScene extends Phaser.Scene {
   private pinchStart: { distance: number; zoom: number } | null = null;
   private drag: { x: number; y: number } | null = null;
   private badges: Badge[] = [];
+  private readonly buildingSprites: { id: string; image: Phaser.GameObjects.Image }[] = [];
+  private aimNonce = 0;
+  private unsubscribeAim: (() => void) | null = null;
   private readyCrop: CropBob | null = null;
   private lod: LodMode = "detailed";
   private unsubscribe: (() => void) | null = null;
@@ -206,8 +207,17 @@ export class IsoScene extends Phaser.Scene {
       this.ghostStamp = performance.now();
       this.refreshGhost();
     });
+    this.unsubscribeAim = useSceneStore.subscribe((state) => {
+      const aim = state.aim;
+      if (aim === null || aim.nonce === this.aimNonce) {
+        return;
+      }
+      this.aimNonce = aim.nonce;
+      this.cameras.main.setZoom(clampZoom(aim.zoom));
+      this.cameras.main.centerOn(aim.x, aim.y);
+      this.publishCamera();
+    });
     this.publishWorld();
-    this.installDebug();
     if (!this.disposed) {
       useSceneStore.getState().publish({ ready: true, error: "" });
     }
@@ -221,6 +231,10 @@ export class IsoScene extends Phaser.Scene {
     const offset = cropBobOffset(time, crop.ready, this.reducedMotion);
     crop.icon.setY(crop.baseY + offset);
     crop.badge?.setY(crop.badgeBaseY + offset);
+    const published = Math.round(offset * 100) / 100;
+    if (published !== useSceneStore.getState().cropOffset) {
+      useSceneStore.getState().publish({ cropOffset: published });
+    }
   }
 
   private drawTerrain(): void {
@@ -307,6 +321,7 @@ export class IsoScene extends Phaser.Scene {
       const depth = footprintDepth(building.x, building.y, footprint.width, footprint.height);
       const image = placeAnchored(this, definition.assetId, building.x, building.y, footprint.width, footprint.height, depth);
       image.setFlipX(spriteFlipX(building.rotation));
+      this.buildingSprites.push({ id: building.instanceId, image });
       const overlay = overlayForState(building.state, building.timerLabel);
       if (overlay === null) {
         continue;
@@ -395,7 +410,12 @@ export class IsoScene extends Phaser.Scene {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
       return;
     }
-    const action = cameraAction(event.key);
+    const action = cameraAction({
+      key: event.key,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+    });
     if (action === null || (event.repeat && action.type !== "pan")) {
       return;
     }
@@ -499,33 +519,6 @@ export class IsoScene extends Phaser.Scene {
       camera.x,
       camera.y,
     );
-  }
-
-  private cellClient(gridX: number, gridY: number): { x: number; y: number } {
-    const world = cellCenter(gridX, gridY);
-    return this.worldClient(world.x, world.y);
-  }
-
-  private worldClient(worldX: number, worldY: number): { x: number; y: number } {
-    const camera = this.cameras.main;
-    const canvas = this.game.canvas;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width === 0 ? 1 : rect.width / canvas.width;
-    const scaleY = canvas.height === 0 ? 1 : rect.height / canvas.height;
-    const screen = screenFromWorld(
-      worldX,
-      worldY,
-      camera.scrollX,
-      camera.scrollY,
-      camera.zoom,
-      camera.width,
-      camera.height,
-      camera.x,
-      camera.y,
-    );
-    const screenX = screen.x;
-    const screenY = screen.y;
-    return { x: rect.left + screenX * scaleX, y: rect.top + screenY * scaleY };
   }
 
   private artTop(image: Phaser.GameObjects.Image): number {
@@ -666,10 +659,16 @@ export class IsoScene extends Phaser.Scene {
     useSceneStore.getState().publish({ overlays: readouts, lod: mode, districtList: mode === "collapsed" });
   }
 
-  private publishWorld(): void {
-    const order = demoDepthOrder()
-      .map((item) => `${item.id}:${item.depth}`)
+  private spriteDepthOrder(): string {
+    return this.buildingSprites
+      .map((entry) => ({ id: entry.id, depth: entry.image.depth }))
+      .sort((left, right) => left.depth - right.depth || left.id.localeCompare(right.id))
+      .map((entry) => `${entry.id}:${entry.depth}`)
       .join(",");
+  }
+
+  private publishWorld(): void {
+    const order = this.spriteDepthOrder();
     this.lod = "detailed";
     this.applyLod("detailed");
     useSceneStore.getState().publish({
@@ -683,34 +682,8 @@ export class IsoScene extends Phaser.Scene {
       scrollX: Math.round(this.cameras.main.scrollX),
       scrollY: Math.round(this.cameras.main.scrollY),
       ghost: IDLE_GHOST,
+      cropOffset: 0,
     });
-  }
-
-  private installDebug(): void {
-    const debug: NfDebug = {
-      ready: true,
-      cellClient: (x, y) => this.cellClient(x, y),
-      worldClient: (x, y) => this.worldClient(x, y),
-      focusCell: (x, y) => {
-        const world = cellCenter(x, y);
-        this.cameras.main.centerOn(world.x, world.y);
-        this.publishCamera();
-      },
-      focusWorld: (x, y, zoom) => {
-        this.cameras.main.setZoom(clampZoom(zoom));
-        this.cameras.main.centerOn(x, y);
-        this.publishCamera();
-      },
-      latencyMs: () => useSceneStore.getState().ghost.latencyMs,
-      cropOffset: () => {
-        const crop = this.readyCrop;
-        if (crop === null) {
-          return 0;
-        }
-        return crop.icon.y - crop.baseY;
-      },
-    };
-    window.__nfDebug = debug;
   }
 
   private dispose(): void {
@@ -720,6 +693,8 @@ export class IsoScene extends Phaser.Scene {
     this.disposed = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribeAim?.();
+    this.unsubscribeAim = null;
     const host = this.host;
     if (host !== null) {
       host.removeEventListener("pointerdown", this.onPointerDown);
@@ -731,9 +706,6 @@ export class IsoScene extends Phaser.Scene {
     window.removeEventListener("keydown", this.onKeyDown);
     this.game.events.off(Phaser.Core.Events.POST_RENDER, this.onPaint);
     window.matchMedia("(prefers-reduced-motion: reduce)").removeEventListener("change", this.onMotion);
-    if (window.__nfDebug !== undefined) {
-      delete window.__nfDebug;
-    }
     useSceneStore.getState().publish({ ready: false });
   }
 }
