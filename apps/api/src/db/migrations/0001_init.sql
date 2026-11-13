@@ -1,4 +1,6 @@
 -- LLD §4 city, economy, and command tables.
+-- Column types here are the original skeleton. 0004_lld_section4.sql rebuilds
+-- these tables so ids, ledger rows, and quest keys match the LLD.
 -- Applied once by the migration runner. Statements are IF NOT EXISTS so a
 -- repaired database can re-run this file without dropping data.
 

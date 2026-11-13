@@ -100,11 +100,11 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
   );
   expect(tokenColumn.rows.map((row) => row.column_name)).toContain("token_hash");
   expect(tokenColumn.rows.map((row) => row.column_name)).not.toContain("token");
-  const stored = await handle.pool.query<{ token_hash: string }>(
+  const stored = await handle.pool.query<{ token_hash: Buffer }>(
     "select token_hash from sessions where user_id = $1",
     [userId],
   );
-  expect(stored.rows[0]?.token_hash).toBe(sha256(token));
+  expect(Buffer.from(stored.rows[0]?.token_hash ?? [])).toEqual(createHash("sha256").update(token).digest());
   const recovery = await handle.pool.query<{ recovery_code_hash: string }>(
     "select recovery_code_hash from users where id = $1",
     [userId],
@@ -113,16 +113,23 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
 
   const ledger = await handle.pool.query<{ total: number; sources: string }>(
     `select coalesce(sum(delta), 0)::int as total, string_agg(source, ',') as sources
-     from inventory_ledger where city_id = $1 and good_id = 'GOOD_BREAD'`,
+     from inventory_ledger where city_id = $1 and resource = 'GOOD_BREAD'`,
     [cityId],
   );
   expect(ledger.rows[0]?.total).toBe(3);
   expect(ledger.rows[0]?.sources).toBe("tutorial_grant");
+  const coins = await handle.pool.query<{ total: number; city_coins: number }>(
+    `select coalesce(sum(delta), 0)::int as total,
+            (select coins from cities where id = $1)::int as city_coins
+     from inventory_ledger where city_id = $1 and resource = 'COINS'`,
+    [cityId],
+  );
+  expect(coins.rows[0]).toEqual({ total: 750, city_coins: 750 });
   const balance = await handle.db
     .select()
     .from(inventoryBalances)
     .where(eq(inventoryBalances.cityId, cityId));
-  expect(balance).toEqual([{ cityId, goodId: "GOOD_BREAD", qty: 3 }]);
+  expect(balance).toMatchObject([{ cityId, goodId: "GOOD_BREAD", qty: 3 }]);
 
   const current = await app.inject({
     method: "GET",
@@ -144,7 +151,7 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
   expect(snapshot.cells).toHaveLength(24 * 24);
   expect(snapshot.train).toBeNull();
   expect(snapshot.contentVersion).toBe(CONTENT_VERSION);
-  expect(snapshot.cityVersion).toBe(0);
+  expect(snapshot.cityVersion).toBe(1);
   expect(snapshot.serverNow).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
   const tutorial = await handle.pool.query<{ tutorial_state: { step: string; guideNpcId: string } }>(
@@ -158,12 +165,12 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
   const wheat = snapshot.buildings.filter((building) => building.definitionId === "AG-001");
   expect(wheat).toHaveLength(2);
   expect(wheat.every((plot) => plot.state === "READY_TO_COLLECT")).toBe(true);
-  const wheatOutput = await handle.pool.query<{ pending_output: { goodId: string; qty: number } }>(
-    "select pending_output from building_instances where city_id = $1 and definition_id = 'AG-001'",
+  const wheatOutput = await handle.pool.query<{ output_ready: { goodId: string; qty: number } }>(
+    "select output_ready from building_instances where city_id = $1 and definition_id = 'AG-001'",
     [cityId],
   );
   expect(wheatOutput.rows).toHaveLength(2);
-  expect(wheatOutput.rows.every((row) => row.pending_output.goodId === "GOOD_WHEAT" && row.pending_output.qty === 3)).toBe(
+  expect(wheatOutput.rows.every((row) => row.output_ready.goodId === "GOOD_WHEAT" && row.output_ready.qty === 3)).toBe(
     true,
   );
 
@@ -204,11 +211,26 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
   expect(solvable.rows.every((row) => row.solvable)).toBe(true);
 
   expect(snapshot.quests.map((quest) => quest.questId)).toEqual(
-    expect.arrayContaining(["quest_flower_street", "quest_early_bakery_01", "quest_tutorial_house"]),
+    expect.arrayContaining([
+      "quest_tutorial_house",
+      "quest_tutorial_grocery",
+      "quest_tutorial_bakery",
+      "quest_early_bakery_01",
+      "quest_flower_street",
+    ]),
   );
   expect(snapshot.quests.every((quest) => quest.track === "story" && quest.periodKey === "-" && quest.status === "ACTIVE")).toBe(
     true,
   );
+  expect(snapshot.quests.find((quest) => quest.questId === "quest_flower_street")?.stepState).toEqual({
+    "0": 0,
+    "1": 0,
+    "2": 0,
+    "3": 0,
+    "4": 0,
+    "5": 0,
+    "6": 0,
+  });
 
   const resumed = await app.inject({ method: "POST", url: "/v1/auth/session", payload: { token } });
   expect(resumed.statusCode).toBe(200);
@@ -253,16 +275,16 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
       authorization: session.authorization,
       "content-type": "application/json",
       "idempotency-key": key,
-      "x-city-version": "0",
+      "x-city-version": "1",
     },
     payload,
   });
   expect(first.statusCode).toBe(200);
   expect(first.headers["idempotent-replay"]).toBeUndefined();
   expect(commandSuccessSchema.parse(first.json())).toMatchObject({
-    cityVersion: 1,
-    result: { note: "alpha", requestedCityVersion: 0 },
-    delta: { fromVersion: 0, toVersion: 1, inventory: { GOOD_BREAD: 3 }, removedBuildingIds: [] },
+    cityVersion: 2,
+    result: { note: "alpha", requestedCityVersion: 1 },
+    delta: { fromVersion: 1, toVersion: 2, inventory: { GOOD_BREAD: 3 }, removedBuildingIds: [] },
   });
 
   const replay = await app.inject({
@@ -272,7 +294,7 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
       authorization: session.authorization,
       "content-type": "application/json",
       "idempotency-key": key,
-      "x-city-version": "0",
+      "x-city-version": "1",
     },
     payload,
   });
@@ -295,10 +317,10 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
 
   const ledger = await handle.pool.query<{ total: number; rows: number }>(
     `select coalesce(sum(delta), 0)::int as total, count(*)::int as rows
-     from inventory_ledger where city_id = $1 and good_id = 'GOOD_BREAD'`,
+     from inventory_ledger where city_id = $1 and resource = 'GOOD_BREAD'`,
     [session.cityId],
   );
-  expect(ledger.rows[0]).toMatchObject({ total: 3, rows: 2 });
+  expect(ledger.rows[0]).toMatchObject({ total: 3, rows: 1 });
 
   const mismatchGuest = await guest();
   const mismatch = await app.inject({
@@ -315,11 +337,11 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
   expect(mismatch.statusCode).toBe(200);
   const mismatchBody = commandSuccessSchema.parse(mismatch.json());
   expect(mismatchBody).toMatchObject({
-    cityVersion: 1,
+    cityVersion: 2,
     result: { note: "stale", requestedCityVersion: 5 },
-    delta: { fromVersion: 0, toVersion: 1 },
+    delta: { fromVersion: 1, toVersion: 2 },
   });
-  expect(mismatchBody.delta.city?.version).toBe(1);
+  expect(mismatchBody.delta.city?.version).toBe(2);
   expect(mismatchBody.delta.city?.cityId).toBe(mismatchGuest.cityId);
 
   const wrongContent = await app.inject({
@@ -342,12 +364,20 @@ test("command pipeline replays, rejects a reused key, and ignores a stale city v
 
 test("lazy resolve frees a finished production slot inside the command transaction", async () => {
   const session = await guest();
-  const buildingId = `${session.cityId}:grocery`;
+  const grocery = await handle.pool.query<{ id: string }>(
+    "select id from building_instances where city_id = $1 and definition_id = 'B-004'",
+    [session.cityId],
+  );
+  const buildingId = grocery.rows[0]?.id;
+  if (buildingId === undefined) {
+    throw new Error("starter grocery is missing");
+  }
+  const jobId = randomUUID();
   await handle.pool.query(
     `insert into production_jobs (
-      id, building_id, city_id, slot, recipe_id, started_at, completes_at
-    ) values ($1, $2, $3, 0, 'RCP-BREAD', now() - interval '2 minutes', now() - interval '1 second')`,
-    [`${session.cityId}:job`, buildingId, session.cityId],
+      id, building_id, city_id, slot, recipe_id, inputs, outputs, started_at, completes_at, version
+    ) values ($1, $2, $3, 0, 'RCP-BREAD', '{}'::jsonb, '{}'::jsonb, now() - interval '2 minutes', now() - interval '1 second', 1)`,
+    [jobId, buildingId, session.cityId],
   );
   const response = await app.inject({
     method: "POST",
@@ -362,22 +392,68 @@ test("lazy resolve frees a finished production slot inside the command transacti
   expect(response.statusCode).toBe(200);
   const resolved = await handle.pool.query<{ moved_to_output_at: Date | null }>(
     "select moved_to_output_at from production_jobs where id = $1",
-    [`${session.cityId}:job`],
+    [jobId],
   );
   expect(resolved.rows[0]?.moved_to_output_at).toBeInstanceOf(Date);
   await handle.pool.query(
     `insert into production_jobs (
-      id, building_id, city_id, slot, recipe_id, started_at, completes_at
-    ) values ($1, $2, $3, 0, 'RCP-BREAD', now(), now() + interval '1 minute')`,
-    [`${session.cityId}:job-2`, buildingId, session.cityId],
+      id, building_id, city_id, slot, recipe_id, inputs, outputs, started_at, completes_at, version
+    ) values ($1, $2, $3, 0, 'RCP-BREAD', '{}'::jsonb, '{}'::jsonb, now(), now() + interval '1 minute', 1)`,
+    [randomUUID(), buildingId, session.cityId],
   );
 });
 
 test("city row locks run in ascending city id order", async () => {
-  await expect(lockCityIds(handle.db, ["dana_city", "amir_garden", "dana_city"])).resolves.toEqual([
-    "amir_garden",
-    "dana_city",
+  const npcs = await handle.pool.query<{ id: string; npc_key: string }>(
+    "select id, npc_key from cities where npc_key in ('dana_city', 'amir_garden')",
+  );
+  const dana = npcs.rows.find((row) => row.npc_key === "dana_city")?.id;
+  const amir = npcs.rows.find((row) => row.npc_key === "amir_garden")?.id;
+  if (dana === undefined || amir === undefined) {
+    throw new Error("npc cities are missing");
+  }
+  const ordered = [dana, amir].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  await expect(lockCityIds(handle.db, [dana, amir, dana])).resolves.toEqual(ordered);
+});
+
+test("concurrent commands on one city each advance the city version", async () => {
+  const session = await guest();
+  const before = await handle.pool.query<{ version: string }>("select version::text as version from cities where id = $1", [
+    session.cityId,
   ]);
+  const start = Number(before.rows[0]?.version);
+  const count = 4;
+  const responses = await Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      app.inject({
+        method: "POST",
+        url: "/v1/cities/current/commands/acknowledge",
+        headers: {
+          authorization: session.authorization,
+          "content-type": "application/json",
+          "idempotency-key": randomUUID(),
+        },
+        payload: { type: "acknowledge", note: `parallel-${index}` },
+      }),
+    ),
+  );
+  expect(responses.every((response) => response.statusCode === 200)).toBe(true);
+  const versions = responses.map((response) => commandSuccessSchema.parse(response.json()).cityVersion);
+  expect(new Set(versions).size).toBe(count);
+  const after = await handle.pool.query<{ version: string }>("select version::text as version from cities where id = $1", [
+    session.cityId,
+  ]);
+  expect(Number(after.rows[0]?.version)).toBe(start + count);
+});
+
+test("unknown routes use the error envelope", async () => {
+  const response = await app.inject({ method: "GET", url: "/v1/does-not-exist" });
+  expect(response.statusCode).toBe(404);
+  expect(apiErrorSchema.parse(response.json())).toMatchObject({
+    error: { code: "NOT_FOUND" },
+    cityVersion: 0,
+  });
+  expect(response.json()).not.toHaveProperty("message");
 });
 
 test("commands are limited to 20 in a burst and 600 per minute for a session", async () => {

@@ -1,4 +1,4 @@
-import { GOOD_IDS, QUESTS, TERRAIN_KINDS, type GoodId } from "@nf/shared/content";
+import { GOOD_IDS, TERRAIN_KINDS, type GoodId } from "@nf/shared/content";
 import { BUILDING_STATES, FRANCHISE_STATES, TRAIN_STATES, type TrainState } from "@nf/shared/rules";
 import {
   deltaSchema,
@@ -18,7 +18,6 @@ const ORDER_DIFFICULTIES = ["easy", "medium", "specialized", "story", "recovery"
 const ORDER_STATUSES = ["OPEN", "FULFILLED", "REROLLED", "REPLACED"] as const;
 const QUEST_STATUSES = ["ACTIVE", "COMPLETED", "CLAIMED"] as const;
 const QUEST_TRACKS = ["story", "growth", "weekly"] as const;
-const STORY_PERIOD = "-";
 
 export type PresentedCity = {
   readonly id: string;
@@ -35,6 +34,7 @@ export type PresentedCity = {
   readonly warehouseTier: number;
   readonly warehouseCap: number;
   readonly contentVersion: number;
+  readonly collectPriority: string;
   readonly version: number;
 };
 
@@ -70,6 +70,7 @@ export type PresentedJob = {
   readonly completesAt: Date;
   readonly movedToOutputAt: Date | null;
   readonly cancelledAt: Date | null;
+  readonly version: number;
 };
 
 export type PresentedOrder = {
@@ -91,6 +92,7 @@ export type PresentedTrain = {
   readonly wagons: unknown;
   readonly departedAt: Date | null;
   readonly returnsAt: Date | null;
+  readonly version: number;
 };
 
 export type PresentedFranchise = {
@@ -106,29 +108,31 @@ export type PresentedFranchise = {
 
 export type PresentedQuest = {
   readonly questId: string;
+  readonly periodKey: string;
+  readonly track: string;
   readonly status: string;
   readonly stepState: unknown;
   readonly version: number;
 };
 
-export function presentCityHeader(city: PresentedCity, version = city.version): CityHeader {
+export function presentCityHeader(city: PresentedCity, version = Number(city.version)): CityHeader {
   return {
     cityId: city.id,
     ownerId: city.ownerId,
     name: city.name,
     isNpc: city.isNpc,
     level: cityLevel(city.level),
-    xp: city.xp,
-    coins: city.coins,
+    xp: Number(city.xp),
+    coins: Number(city.coins),
     gems: city.gems,
     civicStars: city.civicStars,
     population: city.population,
     populationCap: city.populationCap,
     warehouseTier: warehouseTier(city.warehouseTier),
     warehouseCap: city.warehouseCap,
-    collectPriority: "QUEST_FIRST",
+    collectPriority: oneOf(city.collectPriority, ["QUEST_FIRST", "OLDEST_FIRST"] as const),
     contentVersion: city.contentVersion,
-    version,
+    version: Number(version),
   };
 }
 
@@ -173,7 +177,7 @@ export function presentSnapshot(input: {
     quests: input.quests.map(presentQuest),
     serverNow: input.serverNow.toISOString(),
     contentVersion: input.contentVersion,
-    cityVersion: input.city.version,
+    cityVersion: Number(input.city.version),
   });
 }
 
@@ -206,7 +210,7 @@ function presentBuilding(building: PresentedBuilding): BuildingInstance {
     y: building.y,
     rotation: rotation(building.rotation),
     state: oneOf(building.state, BUILDING_STATES),
-    version: building.version,
+    version: Number(building.version),
   };
 }
 
@@ -218,7 +222,7 @@ function presentJob(job: PresentedJob): ProductionJob {
     recipeId: job.recipeId,
     startedAt: job.startedAt.toISOString(),
     completesAt: job.completesAt.toISOString(),
-    version: 0,
+    version: Number(job.version),
   };
 }
 
@@ -231,7 +235,7 @@ function presentOrder(order: PresentedOrder): OrderInstance {
     requirements: requirementMap(order.requirements),
     reward: { coins: order.rewardCoins, xp: order.rewardXp, civicStars: order.civicStars },
     status: oneOf(order.status, ORDER_STATUSES),
-    version: order.version,
+    version: Number(order.version),
   };
 }
 
@@ -249,7 +253,7 @@ function presentTrain(train: PresentedTrain | null): TrainInstance | null {
     wagons,
     departedAt: train.departedAt?.toISOString() ?? null,
     returnsAt: train.returnsAt?.toISOString() ?? null,
-    version: 0,
+    version: Number(train.version),
   };
 }
 
@@ -262,20 +266,18 @@ function presentFranchise(franchise: PresentedFranchise): FranchiseInstance {
     state: oneOf(franchise.state, FRANCHISE_STATES),
     splitBps: franchise.splitBps,
     streakDays: franchise.streakDays,
-    version: franchise.version,
+    version: Number(franchise.version),
   };
 }
 
 function presentQuest(quest: PresentedQuest): QuestProgress {
-  const defined = QUESTS.find((item) => item.id === quest.questId);
-  const track = defined === undefined ? "story" : defined.track;
   return {
     questId: quest.questId,
-    periodKey: STORY_PERIOD,
-    track: oneOf(track, QUEST_TRACKS),
+    periodKey: quest.periodKey,
+    track: oneOf(quest.track, QUEST_TRACKS),
     status: oneOf(quest.status, QUEST_STATUSES),
     stepState: stepState(quest.stepState),
-    version: quest.version,
+    version: Number(quest.version),
   };
 }
 

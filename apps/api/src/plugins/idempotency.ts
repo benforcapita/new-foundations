@@ -15,10 +15,26 @@ import { orderedCityIds } from "../commands/orderedCityIds";
 import { presentCityHeader, presentDelta, presentInventory } from "../modules/present";
 
 export type LedgerWrite = {
-  readonly goodId: string;
+  readonly resource: string;
   readonly delta: number;
   readonly source: string;
+  readonly refType?: string;
+  readonly refId?: string;
 };
+
+type CityResource = "COINS" | "XP" | "GEMS" | "CIVIC_STARS";
+
+function isCityResource(resource: string): resource is CityResource {
+  switch (resource) {
+    case "COINS":
+    case "XP":
+    case "GEMS":
+    case "CIVIC_STARS":
+      return true;
+    default:
+      return false;
+  }
+}
 
 export type CommandEffects = {
   readonly ledger: readonly LedgerWrite[];
@@ -132,25 +148,40 @@ export async function runCommand(
     }
 
     const effects = await input.apply();
+    const versionAfter = Number(city.version) + 1;
+    const cityBalances = {
+      coins: Number(city.coins),
+      xp: Number(city.xp),
+      gems: city.gems,
+      civicStars: city.civicStars,
+    };
     for (const entry of effects.ledger) {
-      await tx.insert(inventoryLedger).values({
+      if (entry.delta === 0) {
+        throw new Error("inventory_ledger delta must be non-zero");
+      }
+      const balanceAfter = await writeLedgerEntry(tx, {
         cityId: input.cityId,
-        goodId: entry.goodId,
-        delta: entry.delta,
-        source: entry.source,
+        entry,
         commandId: input.commandId,
+        versionAfter,
+        cityBalances,
       });
-      await tx
-        .insert(inventoryBalances)
-        .values({ cityId: input.cityId, goodId: entry.goodId, qty: entry.delta })
-        .onConflictDoUpdate({
-          target: [inventoryBalances.cityId, inventoryBalances.goodId],
-          set: { qty: sql`${inventoryBalances.qty} + ${entry.delta}` },
-        });
+      if (isCityResource(entry.resource)) {
+        applyCityResource(cityBalances, entry.resource, balanceAfter);
+      }
     }
 
-    const versionAfter = city.version + 1;
-    await tx.update(cities).set({ version: versionAfter }).where(eq(cities.id, input.cityId));
+    await tx
+      .update(cities)
+      .set({
+        version: versionAfter,
+        updatedAt: input.now,
+        coins: cityBalances.coins,
+        xp: cityBalances.xp,
+        gems: cityBalances.gems,
+        civicStars: cityBalances.civicStars,
+      })
+      .where(eq(cities.id, input.cityId));
 
     if (effects.telemetry !== undefined) {
       await tx.insert(telemetryEvents).values({
@@ -163,8 +194,10 @@ export async function runCommand(
       });
     }
 
-    const stale = input.fromVersion !== null && input.fromVersion !== city.version;
-    const touched = [...new Set(effects.ledger.map((entry) => entry.goodId))];
+    const stale = input.fromVersion !== null && input.fromVersion !== Number(city.version);
+    const touched = [
+      ...new Set(effects.ledger.map((entry) => entry.resource).filter((resource) => !isCityResource(resource))),
+    ];
     const balances =
       stale || touched.length === 0
         ? await tx.select().from(inventoryBalances).where(eq(inventoryBalances.cityId, input.cityId))
@@ -176,7 +209,7 @@ export async function runCommand(
     const body = commandSuccessSchema.parse({
       result: effects.result ?? {},
       delta: presentDelta({
-        fromVersion: city.version,
+        fromVersion: Number(city.version),
         toVersion: versionAfter,
         inventory: presentInventory(balances),
         ...(stale ? { city: presentCityHeader(city, versionAfter) } : {}),
@@ -191,4 +224,97 @@ export async function runCommand(
 
     return { statusCode: 200, body, replayed: false };
   });
+}
+
+type CommandTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+type CityBalances = {
+  coins: number;
+  xp: number;
+  gems: number;
+  civicStars: number;
+};
+
+function readCityResource(balances: CityBalances, resource: CityResource): number {
+  switch (resource) {
+    case "COINS":
+      return balances.coins;
+    case "XP":
+      return balances.xp;
+    case "GEMS":
+      return balances.gems;
+    case "CIVIC_STARS":
+      return balances.civicStars;
+    default: {
+      const unreachable: never = resource;
+      throw new Error(`unknown city resource ${String(unreachable)}`);
+    }
+  }
+}
+
+function applyCityResource(balances: CityBalances, resource: CityResource, balanceAfter: number): void {
+  switch (resource) {
+    case "COINS":
+      balances.coins = balanceAfter;
+      return;
+    case "XP":
+      balances.xp = balanceAfter;
+      return;
+    case "GEMS":
+      balances.gems = balanceAfter;
+      return;
+    case "CIVIC_STARS":
+      balances.civicStars = balanceAfter;
+      return;
+    default: {
+      const unreachable: never = resource;
+      throw new Error(`unknown city resource ${String(unreachable)}`);
+    }
+  }
+}
+
+async function writeLedgerEntry(
+  tx: CommandTx,
+  input: {
+    readonly cityId: string;
+    readonly entry: LedgerWrite;
+    readonly commandId: string;
+    readonly versionAfter: number;
+    readonly cityBalances: CityBalances;
+  },
+): Promise<number> {
+  let balanceAfter: number;
+  if (isCityResource(input.entry.resource)) {
+    balanceAfter = readCityResource(input.cityBalances, input.entry.resource) + input.entry.delta;
+  } else {
+    const existing = await tx
+      .select({ qty: inventoryBalances.qty })
+      .from(inventoryBalances)
+      .where(and(eq(inventoryBalances.cityId, input.cityId), eq(inventoryBalances.goodId, input.entry.resource)))
+      .limit(1);
+    balanceAfter = (existing[0]?.qty ?? 0) + input.entry.delta;
+    await tx
+      .insert(inventoryBalances)
+      .values({
+        cityId: input.cityId,
+        goodId: input.entry.resource,
+        qty: balanceAfter,
+        version: input.versionAfter,
+      })
+      .onConflictDoUpdate({
+        target: [inventoryBalances.cityId, inventoryBalances.goodId],
+        set: { qty: balanceAfter, version: input.versionAfter },
+      });
+  }
+  await tx.insert(inventoryLedger).values({
+    cityId: input.cityId,
+    resource: input.entry.resource,
+    delta: input.entry.delta,
+    balanceAfter,
+    source: input.entry.source,
+    commandId: input.commandId,
+    refType: input.entry.refType ?? null,
+    refId: input.entry.refId ?? null,
+  });
+  return balanceAfter;
 }

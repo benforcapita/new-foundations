@@ -2,6 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { ApiError, apiErrorBody } from "../errors";
 
 export function registerErrors(app: FastifyInstance): void {
+  app.setNotFoundHandler((request, reply) => {
+    void reply.status(404).send(apiErrorBody(new ApiError(404, "NOT_FOUND", `Route ${request.method} ${request.url} not found`)));
+  });
+
   app.setErrorHandler((error: unknown, request, reply) => {
     if (error instanceof ApiError) {
       void reply.status(error.statusCode).send(apiErrorBody(error));

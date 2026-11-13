@@ -50,7 +50,7 @@ export async function acknowledgeCommand(
     cityLevel: actor.level,
     apply: () =>
       Promise.resolve({
-        ledger: [{ goodId: "GOOD_BREAD", delta: 0, source: "acknowledge" }],
+        ledger: [],
         telemetry: { name: "command_acknowledged", payload: { note } },
         result: fromVersion === null ? { note } : { note, requestedCityVersion: fromVersion },
       }),

@@ -10,6 +10,10 @@ export function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function sha256Bytes(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
 export function hashesEqual(leftHex: string, rightHex: string): boolean {
   const left = Buffer.from(leftHex, "hex");
   const right = Buffer.from(rightHex, "hex");

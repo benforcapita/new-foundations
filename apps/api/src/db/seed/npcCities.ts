@@ -1,22 +1,22 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { CONTENT_VERSION, agricultureById, buildingById } from "@nf/shared";
 import type { Database } from "../client";
+import { deterministicUuid } from "../ids";
 import { buildingCells, buildingInstances, cities, cityCells } from "../schema";
 
 type CellRole = "terrain" | "franchise_plot";
 
 type PlacedBuilding = {
-  readonly id: string;
   readonly definitionId: string;
   readonly x: number;
   readonly y: number;
   readonly state: string;
-  readonly pendingOutput: { goodId: string; qty: number } | null;
+  readonly outputReady: { goodId: string; qty: number } | Record<string, never>;
 };
 
 type NpcCitySpec = {
-  readonly id: "dana_city" | "amir_garden";
-  readonly catalogId: "NPC-CITY-DANA" | "NPC-CITY-AMIR";
+  readonly npcKey: "dana_city" | "amir_garden";
   readonly name: string;
   readonly width: number;
   readonly height: number;
@@ -36,8 +36,7 @@ if (DANA_HALL.category !== "civic") {
 
 const NPC_CITIES: readonly NpcCitySpec[] = [
   {
-    id: "dana_city",
-    catalogId: "NPC-CITY-DANA",
+    npcKey: "dana_city",
     name: "Dana's City",
     width: 16,
     height: 16,
@@ -49,27 +48,24 @@ const NPC_CITIES: readonly NpcCitySpec[] = [
     ],
     buildings: [
       {
-        id: "dana_city:town_hall",
         definitionId: "B-009",
         x: 2,
         y: 2,
         state: "ACTIVE",
-        pendingOutput: null,
+        outputReady: {},
       },
       {
-        id: "dana_city:grocery",
         definitionId: "B-004",
         x: 8,
         y: 2,
         state: "NEEDS_SUPPLY",
-        pendingOutput: null,
+        outputReady: {},
       },
     ],
     populationCap: DANA_HALL.populationCap,
   },
   {
-    id: "amir_garden",
-    catalogId: "NPC-CITY-AMIR",
+    npcKey: "amir_garden",
     name: "Amir's Garden",
     width: 16,
     height: 16,
@@ -78,20 +74,18 @@ const NPC_CITIES: readonly NpcCitySpec[] = [
     plots: [{ x: 12, y: 2, width: 2, height: 2 }],
     buildings: [
       {
-        id: "amir_garden:wheat_0",
         definitionId: "AG-001",
         x: 2,
         y: 2,
         state: "READY_TO_COLLECT",
-        pendingOutput: { goodId: AMIR_WHEAT.outputGoodId, qty: AMIR_WHEAT.outputQty },
+        outputReady: { goodId: AMIR_WHEAT.outputGoodId, qty: AMIR_WHEAT.outputQty },
       },
       {
-        id: "amir_garden:wheat_1",
         definitionId: "AG-001",
         x: 6,
         y: 2,
         state: "READY_TO_COLLECT",
-        pendingOutput: { goodId: AMIR_WHEAT.outputGoodId, qty: AMIR_WHEAT.outputQty },
+        outputReady: { goodId: AMIR_WHEAT.outputGoodId, qty: AMIR_WHEAT.outputQty },
       },
     ],
     populationCap: 0,
@@ -106,8 +100,10 @@ function footprintOf(definitionId: string): { readonly width: number; readonly h
       return buildingById("B-009").footprint;
     case "AG-001":
       return agricultureById("AG-001").footprint;
-    default:
-      throw new Error(`unknown NPC definition ${definitionId}`);
+    default: {
+      const unreachable: never = definitionId as never;
+      throw new Error(`unknown NPC definition ${String(unreachable)}`);
+    }
   }
 }
 
@@ -145,21 +141,21 @@ function assertLayout(spec: NpcCitySpec, cells: readonly { x: number; y: number;
         const y = building.y + dy;
         const key = `${x},${y}`;
         if (occupied.has(key)) {
-          throw new Error(`${spec.id} building ${building.id} overlaps ${key}`);
+          throw new Error(`${spec.npcKey} building ${building.definitionId} overlaps ${key}`);
         }
         occupied.add(key);
         const cell = cells.find((candidate) => candidate.x === x && candidate.y === y);
         if (cell === undefined) {
-          throw new Error(`${spec.id} building ${building.id} leaves the map at ${key}`);
+          throw new Error(`${spec.npcKey} building ${building.definitionId} leaves the map at ${key}`);
         }
         if (cell.cellRole === "franchise_plot") {
-          throw new Error(`${spec.id} building ${building.id} covers a franchise host plot at ${key}`);
+          throw new Error(`${spec.npcKey} building ${building.definitionId} covers a franchise host plot at ${key}`);
         }
       }
     }
   }
   if (!cells.some((cell) => cell.cellRole === "franchise_plot")) {
-    throw new Error(`${spec.id} is missing franchise host plots`);
+    throw new Error(`${spec.npcKey} is missing franchise host plots`);
   }
 }
 
@@ -168,10 +164,11 @@ export async function seedNpcCities(db: Database): Promise<void> {
     for (const spec of NPC_CITIES) {
       const cells = cellsFor(spec);
       assertLayout(spec, cells);
+      const cityId = deterministicUuid(spec.npcKey);
       await tx
         .insert(cities)
         .values({
-          id: spec.id,
+          id: cityId,
           ownerId: null,
           name: spec.name,
           level: 1,
@@ -179,31 +176,32 @@ export async function seedNpcCities(db: Database): Promise<void> {
           coins: 0,
           gems: 0,
           civicStars: 0,
-          version: 0,
+          version: 1,
           contentVersion: CONTENT_VERSION,
           population: 0,
           populationCap: spec.populationCap,
           warehouseTier: 0,
           warehouseCap: 40,
           isNpc: true,
-          catalogId: spec.catalogId,
+          npcKey: spec.npcKey,
           tutorialState: null,
+          unlockedBounds: [[0, 0]],
+          collectPriority: "QUEST_FIRST",
         })
         .onConflictDoUpdate({
-          target: cities.id,
+          target: cities.npcKey,
           set: {
             name: spec.name,
             isNpc: true,
-            catalogId: spec.catalogId,
             populationCap: spec.populationCap,
           },
         });
 
-      await tx.delete(buildingInstances).where(eq(buildingInstances.cityId, spec.id));
-      await tx.delete(cityCells).where(eq(cityCells.cityId, spec.id));
+      await tx.delete(buildingInstances).where(eq(buildingInstances.cityId, cityId));
+      await tx.delete(cityCells).where(eq(cityCells.cityId, cityId));
       await tx.insert(cityCells).values(
         cells.map((cell) => ({
-          cityId: spec.id,
+          cityId,
           x: cell.x,
           y: cell.y,
           terrainId: cell.terrainId,
@@ -211,31 +209,35 @@ export async function seedNpcCities(db: Database): Promise<void> {
           cellRole: cell.cellRole,
         })),
       );
+      const placed = spec.buildings.map((building) => ({
+        id: randomUUID(),
+        building,
+      }));
       await tx.insert(buildingInstances).values(
-        spec.buildings.map((building) => ({
-          id: building.id,
-          cityId: spec.id,
+        placed.map(({ id, building }) => ({
+          id,
+          cityId,
           definitionId: building.definitionId,
           x: building.x,
           y: building.y,
           rotation: 0,
           state: building.state,
           level: 1,
-          version: 0,
-          pendingOutput: building.pendingOutput,
+          version: 1,
+          outputReady: building.outputReady,
         })),
       );
       await tx.insert(buildingCells).values(
-        spec.buildings.flatMap((building) => {
+        placed.flatMap(({ id, building }) => {
           const footprint = footprintOf(building.definitionId);
           const covered: { cityId: string; x: number; y: number; buildingId: string }[] = [];
           for (let dy = 0; dy < footprint.height; dy += 1) {
             for (let dx = 0; dx < footprint.width; dx += 1) {
               covered.push({
-                cityId: spec.id,
+                cityId,
                 x: building.x + dx,
                 y: building.y + dy,
-                buildingId: building.id,
+                buildingId: id,
               });
             }
           }

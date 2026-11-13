@@ -1,8 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Database } from "../db/client";
 import { cities, sessions, users } from "../db/schema";
 import { createGuest } from "../db/seed/starterCity";
-import { randomSecret, sha256Hex } from "../crypto";
+import { randomSecret, sha256Bytes, sha256Hex } from "../crypto";
 import { ApiError } from "../errors";
 
 export type Actor = {
@@ -81,7 +81,7 @@ async function recoverSession(db: Database, recoveryCode: string): Promise<Sessi
   const token = randomSecret();
   await db.transaction(async (tx) => {
     await tx.delete(sessions).where(eq(sessions.userId, user.id));
-    await tx.insert(sessions).values({ userId: user.id, tokenHash: sha256Hex(token) });
+    await tx.insert(sessions).values({ userId: user.id, tokenHash: sha256Bytes(token), lastSeenAt: new Date() });
   });
   return { token, userId: user.id, cityId: city.id, isNew: false };
 }
@@ -96,12 +96,13 @@ async function findActor(db: Database, token: string): Promise<Actor | null> {
     })
     .from(sessions)
     .innerJoin(cities, eq(cities.ownerId, sessions.userId))
-    .where(and(eq(sessions.tokenHash, sha256Hex(token)), eq(cities.isNpc, false)))
+    .where(and(eq(sessions.tokenHash, sha256Bytes(token)), isNull(sessions.revokedAt), eq(cities.isNpc, false)))
     .limit(1);
   const row = rows[0];
   if (row === undefined) {
     return null;
   }
+  await db.update(sessions).set({ lastSeenAt: new Date() }).where(eq(sessions.id, row.sessionId));
   return row;
 }
 

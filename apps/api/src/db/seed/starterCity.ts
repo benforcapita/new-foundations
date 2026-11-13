@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   CONTENT_VERSION,
   ORDER_TEMPLATES,
+  QUESTS,
   STARTER_MAP,
   agricultureById,
   buildingById,
@@ -9,10 +10,11 @@ import {
   orderReward,
   warehouseCapacity,
   type OrderTemplate,
+  type QuestDefinition,
 } from "@nf/shared";
 import type { Database } from "../client";
 import { buildingCells, buildingInstances, cities, cityCells, inventoryBalances, inventoryLedger, orderInstances, quests, sessions, users } from "../schema";
-import { randomSecret, sha256Hex } from "../../crypto";
+import { randomSecret, sha256Bytes, sha256Hex } from "../../crypto";
 
 const STARTER_COINS = 750;
 const STARTER_BREAD = 3;
@@ -34,8 +36,16 @@ type Placement = {
   readonly width: number;
   readonly height: number;
   readonly state: string;
-  readonly pendingOutput: { readonly goodId: string; readonly qty: number } | null;
+  readonly outputReady: { readonly goodId: string; readonly qty: number } | Record<string, never>;
 };
+
+const SEEDED_QUEST_IDS = ["quest_tutorial_house", "quest_early_bakery_01", "quest_flower_street"] as const;
+const STARTER_CHUNKS: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [1, 0],
+  [0, 1],
+  [1, 1],
+];
 
 type StarterTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
@@ -54,7 +64,8 @@ export async function createGuest(db: Database): Promise<IssuedSession> {
     await insertStarterCity(tx, userId, cityId);
     await tx.insert(sessions).values({
       userId,
-      tokenHash: sha256Hex(token),
+      tokenHash: sha256Bytes(token),
+      lastSeenAt: new Date(),
     });
   });
   return { token, userId, cityId, isNew: true, recoveryCode };
@@ -70,44 +81,44 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
   const warehouseCap = warehouseCapacity(0);
   const placements: readonly Placement[] = [
     {
-      id: `${cityId}:town_hall`,
+      id: randomUUID(),
       definitionId: "B-009",
       x: STARTER_MAP.townHall.x,
       y: STARTER_MAP.townHall.y,
       width: hall.footprint.width,
       height: hall.footprint.height,
       state: "ACTIVE",
-      pendingOutput: null,
+      outputReady: {},
     },
     {
-      id: `${cityId}:grocery`,
+      id: randomUUID(),
       definitionId: "B-004",
       x: 9,
       y: 4,
       width: grocery.footprint.width,
       height: grocery.footprint.height,
       state: "NEEDS_SUPPLY",
-      pendingOutput: null,
+      outputReady: {},
     },
     {
-      id: `${cityId}:wheat_0`,
+      id: randomUUID(),
       definitionId: "AG-001",
       x: 0,
       y: 0,
       width: wheat.footprint.width,
       height: wheat.footprint.height,
       state: "READY_TO_COLLECT",
-      pendingOutput: { goodId: wheat.outputGoodId, qty: wheat.outputQty },
+      outputReady: { goodId: wheat.outputGoodId, qty: wheat.outputQty },
     },
     {
-      id: `${cityId}:wheat_1`,
+      id: randomUUID(),
       definitionId: "AG-001",
       x: 2,
       y: 0,
       width: wheat.footprint.width,
       height: wheat.footprint.height,
       state: "READY_TO_COLLECT",
-      pendingOutput: { goodId: wheat.outputGoodId, qty: wheat.outputQty },
+      outputReady: { goodId: wheat.outputGoodId, qty: wheat.outputQty },
     },
   ];
   assertPlacements(placements);
@@ -121,15 +132,17 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
     coins: STARTER_COINS,
     gems: 0,
     civicStars: 0,
-    version: 0,
+    version: 1,
     contentVersion: CONTENT_VERSION,
     population: 0,
     populationCap: hall.populationCap,
     warehouseTier: 0,
     warehouseCap,
     isNpc: false,
-    catalogId: null,
+    npcKey: null,
     tutorialState: { step: "place_house", guideNpcId: "NPC-MIA" },
+    unlockedBounds: STARTER_CHUNKS,
+    collectPriority: "QUEST_FIRST",
   });
 
   const cells: {
@@ -164,8 +177,8 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
       rotation: 0,
       state: placement.state,
       level: 1,
-      version: 0,
-      pendingOutput: placement.pendingOutput,
+      version: 1,
+      outputReady: placement.outputReady,
     })),
   );
   await tx.insert(buildingCells).values(
@@ -185,13 +198,23 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
     }),
   );
 
-  await tx.insert(inventoryBalances).values({ cityId, goodId: "GOOD_BREAD", qty: STARTER_BREAD });
-  await tx.insert(inventoryLedger).values({
-    cityId,
-    goodId: "GOOD_BREAD",
-    delta: STARTER_BREAD,
-    source: "tutorial_grant",
-  });
+  await tx.insert(inventoryBalances).values({ cityId, goodId: "GOOD_BREAD", qty: STARTER_BREAD, version: 1 });
+  await tx.insert(inventoryLedger).values([
+    {
+      cityId,
+      resource: "COINS",
+      delta: STARTER_COINS,
+      balanceAfter: STARTER_COINS,
+      source: "tutorial_grant",
+    },
+    {
+      cityId,
+      resource: "GOOD_BREAD",
+      delta: STARTER_BREAD,
+      balanceAfter: STARTER_BREAD,
+      source: "tutorial_grant",
+    },
+  ]);
 
   const seedBread = orderTemplate("ORD-T-001");
   const easyBread = orderTemplate("ORD-EASY-BREAD");
@@ -205,7 +228,7 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
     catalogOrder(cityId, 0, seedBread),
     catalogOrder(cityId, 1, easyBread),
     {
-      id: `${cityId}:order:2`,
+      id: randomUUID(),
       cityId,
       slot: 2,
       templateId: "ORD-EASY-WHEAT",
@@ -216,36 +239,22 @@ async function insertStarterCity(tx: StarterTx, userId: string, cityId: string):
       rewardCoins: wheatReward.coins,
       rewardXp: wheatReward.xp,
       civicStars: wheatReward.civicStars,
-      version: 0,
+      version: 1,
     },
   ]);
 
-  await tx.insert(quests).values([
-    {
+  await tx.insert(quests).values(
+    seededQuests().map((quest) => ({
       cityId,
-      questId: "quest_tutorial_house",
-      status: "ACTIVE",
+      questId: quest.id,
+      periodKey: "-",
+      track: quest.track,
+      status: "ACTIVE" as const,
       stepIndex: 0,
-      stepState: { "0": 0 },
-      version: 0,
-    },
-    {
-      cityId,
-      questId: "quest_early_bakery_01",
-      status: "ACTIVE",
-      stepIndex: 0,
-      stepState: { "0": 0, "1": 0 },
-      version: 0,
-    },
-    {
-      cityId,
-      questId: "quest_flower_street",
-      status: "ACTIVE",
-      stepIndex: 0,
-      stepState: { "0": 0 },
-      version: 0,
-    },
-  ]);
+      stepState: initialStepState(quest.steps),
+      version: 1,
+    })),
+  );
 }
 
 function orderTemplate(id: string): OrderTemplate {
@@ -258,7 +267,7 @@ function orderTemplate(id: string): OrderTemplate {
 
 function catalogOrder(cityId: string, slot: number, template: OrderTemplate) {
   return {
-    id: `${cityId}:order:${slot}`,
+    id: randomUUID(),
     cityId,
     slot,
     templateId: template.id,
@@ -269,8 +278,38 @@ function catalogOrder(cityId: string, slot: number, template: OrderTemplate) {
     rewardCoins: template.reward.coins,
     rewardXp: template.reward.xp,
     civicStars: 1,
-    version: 0,
+    version: 1,
   };
+}
+
+function seededQuests(): readonly QuestDefinition[] {
+  const byId = new Map(QUESTS.map((quest) => [quest.id, quest]));
+  const include = new Set<string>();
+  const visit = (id: string): void => {
+    if (include.has(id)) {
+      return;
+    }
+    const quest = byId.get(id);
+    if (quest === undefined) {
+      throw new Error(`quest ${id} is not in the catalog`);
+    }
+    for (const prerequisite of quest.prerequisites) {
+      visit(prerequisite);
+    }
+    include.add(id);
+  };
+  for (const id of SEEDED_QUEST_IDS) {
+    visit(id);
+  }
+  return QUESTS.filter((quest) => include.has(quest.id));
+}
+
+function initialStepState(steps: readonly unknown[]): Record<string, number> {
+  const state: Record<string, number> = {};
+  for (let index = 0; index < steps.length; index += 1) {
+    state[String(index)] = 0;
+  }
+  return state;
 }
 
 function assertPlacements(placements: readonly Placement[]): void {
