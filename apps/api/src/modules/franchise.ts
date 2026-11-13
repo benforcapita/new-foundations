@@ -74,9 +74,13 @@ async function applyFranchise(ctx: CommandContext, ownerId: string, hostId: stri
     if (branch.stockCycles + cycles > 2) throw new ApiError(422, "VALIDATION", "Branch stock is full");
     const day = ctx.now.toISOString().slice(0, 10);
     const streak = nextSupplyStreak(branch.lastSupplyDay, branch.streakDays, ctx.now);
-    const total = franchiseTotal(110, streak) * cycles;
     const split = franchiseSplit(franchiseTotal(110, streak));
-    await ctx.tx.insert(franchiseShipments).values({ id: randomUUID(), franchiseId: branch.id, commandId: ctx.commandId, goods: [{ goodId: "GOOD_BREAD", qty: cycles * 3 }], totalValue: total, ownerAmount: split.owner * cycles, hostAmount: split.host * cycles, streakBonusBps: Math.min(1000, Math.max(0, streak - 1) * 200), state: transitionFranchiseShipment("SUPPLIED", "EARNING"), suppliedAt: ctx.now, earnCompletesAt: new Date(ctx.now.getTime() + 2_700_000) });
+    const queued = await ctx.tx.select().from(franchiseShipments).where(and(eq(franchiseShipments.franchiseId, branch.id), inArray(franchiseShipments.state, ["EARNING", "READY"])));
+    let completesAt = Math.max(ctx.now.getTime(), ...queued.map((shipment) => shipment.earnCompletesAt?.getTime() ?? 0));
+    for (let cycle = 0; cycle < cycles; cycle += 1) {
+      completesAt += 2_700_000;
+      await ctx.tx.insert(franchiseShipments).values({ id: randomUUID(), franchiseId: branch.id, commandId: ctx.commandId, cycleIndex: cycle, goods: [{ goodId: "GOOD_BREAD", qty: 3 }], totalValue: franchiseTotal(110, streak), ownerAmount: split.owner, hostAmount: split.host, streakBonusBps: Math.min(1000, Math.max(0, streak - 1) * 200), state: transitionFranchiseShipment("SUPPLIED", "EARNING"), suppliedAt: ctx.now, earnCompletesAt: new Date(completesAt) });
+    }
     await ctx.tx.update(franchises).set({ streakDays: streak, lastSupplyDay: day, stockCycles: branch.stockCycles + cycles, cycleStartedAt: ctx.now, version: ctx.versionAfter }).where(eq(franchises.id, branch.id));
     const [host] = await ctx.tx.select().from(cities).where(eq(cities.id, hostId));
     const hostNpcId = host?.npcKey === "dana_city" ? "NPC-CITY-DANA" : "NPC-CITY-AMIR";

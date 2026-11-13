@@ -526,14 +526,15 @@ test("a second collect drops rent past the twelve hour cap", async () => {
 
 test("US-007 expansion enforces its milestone, adjacency, cost and cap", async () => {
   const session = await guest();
+  await handle.pool.query("update cities set coins = 1750 where id = $1", [session.cityId]);
+  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'COINS', 1000, 1750, 'integration_grant')", [session.cityId]);
   const blocked = await command(session, "expand-land", { chunkX: 2, chunkY: 0 });
   expect(blocked.statusCode).toBe(422);
+  expect(asRecord(asRecord(asRecord(blocked.json()).error).details).reason).toBe("TUTORIAL_INCOMPLETE");
   expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
   const grocery = await handle.pool.query<{ id: string }>("select id from building_instances where city_id = $1 and definition_id = 'B-004'", [session.cityId]);
   expect((await command(session, "supply-business", { instanceId: readString(grocery.rows[0]?.id) })).statusCode).toBe(200);
   expect((await command(session, "place-building", { definitionId: "B-007", x: 2, y: 4, rotation: 0 })).statusCode).toBe(200);
-  await handle.pool.query("update cities set coins = 1750 where id = $1", [session.cityId]);
-  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'COINS', 1000, 1750, 'integration_grant')", [session.cityId]);
   const diagonal = await command(session, "expand-land", { chunkX: 2, chunkY: 2 });
   expect(diagonal.statusCode).toBe(422);
   const expanded = await command(session, "expand-land", { chunkX: 2, chunkY: 0 });
@@ -617,15 +618,20 @@ test("US-008 and US-009 franchise supply and settlement reconcile both cities", 
   expect(quest.rows[0]?.status).toBe("COMPLETED");
   const early = await post(`/v1/franchises/${franchiseId}/collect`, {});
   expect(asRecord(asRecord(early.json()).result)).toMatchObject({ ownerAmount: 0, hostAmount: 0, total: 0 });
-  advance(2_700_000);
+  advance(2_699_000);
+  expect(asRecord(asRecord((await post(`/v1/franchises/${franchiseId}/collect`, {})).json()).result).total).toBe(0);
+  advance(1_000);
   const collected = await post(`/v1/franchises/${franchiseId}/collect`, {});
   expect(collected.statusCode, collected.body).toBe(200);
-  expect(asRecord(asRecord(collected.json()).result)).toMatchObject({ ownerAmount: 132, hostAmount: 88, total: 220 });
+  expect(asRecord(asRecord(collected.json()).result)).toMatchObject({ ownerAmount: 66, hostAmount: 44, total: 110 });
   const entries = await handle.pool.query<{ city_id: string; delta: string }>("select city_id, delta::text from inventory_ledger where ref_id = $1 and source = 'franchise_collect' order by city_id", [franchiseId]);
   expect(entries.rows).toHaveLength(2);
-  expect(Number(entries.rows.find((row) => row.city_id === session.cityId)?.delta)).toBe(132);
-  expect(Number(entries.rows.find((row) => row.city_id === host.cityId)?.delta)).toBe(88);
-  expect(entries.rows.reduce((sum, row) => sum + Number(row.delta), 0)).toBe(220);
+  expect(Number(entries.rows.find((row) => row.city_id === session.cityId)?.delta)).toBe(66);
+  expect(Number(entries.rows.find((row) => row.city_id === host.cityId)?.delta)).toBe(44);
+  expect(entries.rows.reduce((sum, row) => sum + Number(row.delta), 0)).toBe(110);
+  expect(asRecord(asRecord((await post(`/v1/franchises/${franchiseId}/collect`, {})).json()).result).total).toBe(0);
+  advance(2_700_000);
+  expect(asRecord(asRecord((await post(`/v1/franchises/${franchiseId}/collect`, {})).json()).result).total).toBe(110);
   await assertLedgerReconciled(session.cityId);
   await assertLedgerReconciled(host.cityId);
 });
@@ -779,3 +785,95 @@ function readString(value: unknown): string {
   }
   return value;
 }
+
+test("franchise guards ownership, plots, stock, and sequential separate supplies", async () => {
+  const owner = await guest();
+  const other = await guest();
+  const hosts = (await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: owner.authorization } })).json() as { hosts: { cityId: string; plots: { plotId: string }[] }[] };
+  const firstHost = hosts.hosts.find((host) => host.plots.length > 0);
+  if (firstHost === undefined) throw new Error("host missing");
+  const nextHost = hosts.hosts.find((host) => host.cityId !== firstHost.cityId && host.plots.length > 0);
+  if (nextHost === undefined) throw new Error("second host missing");
+  const post = (who: typeof owner, path: string, body: object) => app.inject({ method: "POST", url: path, headers: { authorization: who.authorization, "idempotency-key": randomUUID() }, payload: body });
+  const request = (who: typeof owner, host: typeof firstHost) => post(who, "/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[0]?.plotId, businessDefinitionId: "B-004" });
+  const created = await request(owner, firstHost);
+  expect(created.statusCode, created.body).toBe(200);
+  const id = readString(asRecord(asRecord(created.json()).result).franchiseId);
+  testFranchises.push(id);
+  const duplicate = await request(owner, nextHost);
+  expect(duplicate.statusCode).toBe(422);
+  expect(asRecord(duplicate.json()).error).toMatchObject({ message: "Brand already has an active branch" });
+  const occupied = await request(other, firstHost);
+  expect(occupied.statusCode).toBe(422);
+  expect(asRecord(occupied.json()).error).toMatchObject({ message: "Plot is occupied" });
+  await handle.pool.query("update inventory_balances set qty = 9 where city_id = $1 and good_id = 'GOOD_BREAD'", [owner.cityId]);
+  const supply = `/v1/franchises/${id}/supply`;
+  const collect = `/v1/franchises/${id}/collect`;
+  expect((await post(other, supply, { cycles: 1 })).statusCode).toBe(404);
+  expect((await post(other, collect, {})).statusCode).toBe(404);
+  expect((await post(owner, supply, { cycles: 1 })).statusCode).toBe(200);
+  advance(60_000);
+  expect((await post(owner, supply, { cycles: 1 })).statusCode).toBe(200);
+  advance(2_640_000);
+  expect(asRecord(asRecord((await post(owner, collect, {})).json()).result).total).toBe(110);
+  expect(asRecord(asRecord((await post(owner, collect, {})).json()).result).total).toBe(0);
+  const stock = await handle.pool.query<{ stock_cycles: number }>("select stock_cycles from franchises where id = $1", [id]);
+  expect(stock.rows[0]?.stock_cycles).toBe(1);
+  advance(2_700_000);
+  expect(asRecord(asRecord((await post(owner, collect, {})).json()).result).total).toBe(110);
+  expect((await post(owner, supply, { cycles: 1 })).statusCode).toBe(200);
+});
+
+test("two franchise cycles consume six bread", async () => {
+  const owner = await guest();
+  const hosts = (await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: owner.authorization } })).json() as { hosts: { cityId: string; plots: { plotId: string }[] }[] };
+  const host = hosts.hosts.find((item) => item.plots.length > 0);
+  if (host === undefined) throw new Error("host missing");
+  const post = (path: string, body: object) => app.inject({ method: "POST", url: path, headers: { authorization: owner.authorization, "idempotency-key": randomUUID() }, payload: body });
+  const created = await post("/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[0]?.plotId, businessDefinitionId: "B-004" });
+  expect(created.statusCode).toBe(200);
+  const id = readString(asRecord(asRecord(created.json()).result).franchiseId);
+  testFranchises.push(id);
+  await handle.pool.query("update inventory_balances set qty = 9 where city_id = $1 and good_id = 'GOOD_BREAD'", [owner.cityId]);
+  expect((await post(`/v1/franchises/${id}/supply`, { cycles: 2 })).statusCode).toBe(200);
+  const balance = await handle.pool.query<{ qty: number }>("select qty from inventory_balances where city_id = $1 and good_id = 'GOOD_BREAD'", [owner.cityId]);
+  expect(balance.rows[0]?.qty).toBe(3);
+});
+
+test("low coins with a solvable order do not create a recovery card", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set coins = 100 where id = $1", [session.cityId]);
+  await handle.pool.query("update order_instances set requirements = '[{\"goodId\":\"GOOD_BREAD\",\"qty\":3}]'::jsonb where city_id = $1 and status = 'OPEN'", [session.cityId]);
+  expect((await acknowledge(session)).statusCode).toBe(200);
+  const cards = await handle.pool.query<{ template_id: string }>("select template_id from order_instances where city_id = $1 and status = 'OPEN'", [session.cityId]);
+  expect(cards.rows.some((card) => card.template_id === "ORD-RECOVERY")).toBe(false);
+});
+
+test("simultaneous collections preserve both payments to a shared host", async () => {
+  const owners = [await guest(), await guest()];
+  const hosts = (await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: owners[0]?.authorization } })).json() as { hosts: { cityId: string; plots: { plotId: string }[] }[] };
+  const host = hosts.hosts.find((item) => item.plots.length >= 2);
+  if (host === undefined) throw new Error("host with two plots missing");
+  const post = (owner: typeof owners[number], path: string, body: object) => app.inject({ method: "POST", url: path, headers: { authorization: owner.authorization, "idempotency-key": randomUUID() }, payload: body });
+  const ids: string[] = [];
+  for (const [index, owner] of owners.entries()) {
+    const response = await post(owner, "/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[index]?.plotId, businessDefinitionId: "B-004" });
+    expect(response.statusCode, response.body).toBe(200);
+    const id = readString(asRecord(asRecord(response.json()).result).franchiseId);
+    ids.push(id); testFranchises.push(id);
+    expect((await post(owner, `/v1/franchises/${id}/supply`, { cycles: 1 })).statusCode).toBe(200);
+  }
+  advance(2_700_000);
+  const before = (await cityRow(host.cityId)).coins;
+  await handle.pool.query(`create or replace function qa_delay_host_update() returns trigger language plpgsql as $$ begin if NEW.coins > OLD.coins and OLD.is_npc then perform pg_sleep(0.3); end if; return NEW; end $$`);
+  await handle.pool.query("create trigger qa_delay_host_update before update on cities for each row execute function qa_delay_host_update()");
+  try {
+    const results = await Promise.all(owners.map((owner, index) => post(owner, `/v1/franchises/${ids[index]}/collect`, {})));
+    expect(results.map((result) => result.statusCode)).toEqual([200, 200]);
+    expect((await cityRow(host.cityId)).coins).toBe(before + 88);
+    await assertLedgerReconciled(host.cityId);
+  } finally {
+    await handle.pool.query("drop trigger qa_delay_host_update on cities");
+    await handle.pool.query("drop function qa_delay_host_update()");
+  }
+});
