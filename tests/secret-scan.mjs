@@ -8,7 +8,7 @@ import { basename } from "node:path";
 const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0").filter(Boolean);
 const findings = [];
 const keyPattern = /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}\b|\bBearer\s+[A-Za-z0-9_.~+/-]{20,}/i;
-const assignment = /\b(?:secret|password|passwd|token|api[_-]?key|pepper)\b\s*[:=]\s*["']?([^\s"'`,;]+)/i;
+const assignment = /\b(?:[A-Za-z_][A-Za-z0-9_-]*)?(?:secret|password|passwd|token|api[_-]?key|pepper)[A-Za-z0-9_-]*\s*[:=]\s*["']?([^\s"'`,;]+)/i;
 for (const file of files) {
   if (/(^|\/)\.env(?:\..*)?$/.test(file) && !file.endsWith(".example")) findings.push(`${file}: tracked environment file`);
   const buffer = readFileSync(file);
