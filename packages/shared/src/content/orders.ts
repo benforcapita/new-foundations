@@ -1,4 +1,5 @@
 import { type GoodId, type GoodStack } from "./ids";
+import { LEVELS } from "./levels";
 
 export type OrderDifficulty = "easy" | "medium" | "specialized" | "story" | "recovery";
 
@@ -43,7 +44,7 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
     id: "ORD-MED-PLANKS",
     nameKey: "order.medium_planks.name",
     difficulty: "medium",
-    unlockLevel: 4,
+    unlockLevel: 5,
     requirements: [
       { goodId: "GOOD_PLANKS", qty: 2 },
       { goodId: "GOOD_BREAD", qty: 1 },
@@ -55,8 +56,11 @@ export const ORDER_TEMPLATES: readonly OrderTemplate[] = [
     nameKey: "order.medium_cheese.name",
     difficulty: "medium",
     unlockLevel: 5,
-    requirements: [{ goodId: "GOOD_CHEESE", qty: 2 }],
-    reward: { coins: 198, xp: 13 },
+    requirements: [
+      { goodId: "GOOD_CHEESE", qty: 2 },
+      { goodId: "GOOD_MILK", qty: 1 },
+    ],
+    reward: { coins: 226, xp: 15 },
   },
   {
     id: "ORD-SPEC-PLANKS",
@@ -114,6 +118,11 @@ export type OrderBoardInput = {
   readonly hasSolvableOpenOrder: boolean;
 };
 
+function mediumOrdersUnlocked(level: number): boolean {
+  const gate = LEVELS.find((entry) => entry.unlocks.includes("medium-orders"));
+  return gate !== undefined && level >= gate.level;
+}
+
 function templateSolvable(template: OrderTemplate, input: OrderBoardInput): boolean {
   if (template.unlockLevel > input.level) {
     return false;
@@ -144,6 +153,10 @@ export function generateOrderBoard(input: OrderBoardInput): readonly GeneratedOr
         coins: RECOVERY_ORDER.coins,
         xp: RECOVERY_ORDER.xp,
       });
+      continue;
+    }
+
+    if (difficulty === "medium" && !mediumOrdersUnlocked(input.level)) {
       continue;
     }
 

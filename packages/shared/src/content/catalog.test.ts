@@ -511,6 +511,12 @@ test("quests, orders, and NPCs cover the starter loop", () => {
   expect(ORDER_TEMPLATES.map((template) => template.difficulty)).toEqual(
     expect.arrayContaining(["easy", "medium", "specialized"]),
   );
+  for (const template of ORDER_TEMPLATES.filter((entry) => entry.difficulty === "medium")) {
+    const goodTypes = new Set(template.requirements.map((line) => line.goodId));
+    expect(template.unlockLevel).toBeGreaterThanOrEqual(5);
+    expect(goodTypes.size).toBeGreaterThanOrEqual(2);
+    expect(goodTypes.size).toBeLessThanOrEqual(4);
+  }
 
   expect(NPCS.map((npc) => npc.id)).toEqual(["NPC-MIA", "NPC-DANA", "NPC-TOM", "NPC-AMIR"]);
   expect(NPC_CITIES.map((city) => city.id)).toEqual(["NPC-CITY-DANA", "NPC-CITY-AMIR"]);
@@ -566,9 +572,18 @@ test("the order generator fills the board and inserts the recovery order", () =>
     unlockedGoodIds: ["GOOD_WHEAT", "GOOD_BREAD", "GOOD_TIMBER", "GOOD_PLANKS"],
     hasSolvableOpenOrder: true,
   });
-  expect(level4.map((order) => order.id)).toEqual(["ORD-EASY-BREAD", "ORD-MED-PLANKS", "ORD-SPEC-PLANKS"]);
-  expect(level4[0]).toMatchObject({ coins: 180, xp: 12 });
-  expect(level4[1]).toMatchObject({ coins: 352, xp: 23 });
+  expect(level4.map((order) => order.difficulty)).toEqual(["easy", "specialized"]);
+  expect(level4.map((order) => order.id)).toEqual(["ORD-EASY-BREAD", "ORD-SPEC-PLANKS"]);
+  expect(level4.some((order) => order.difficulty === "medium")).toBe(false);
+
+  const level5 = generateOrderBoard({
+    level: 5,
+    coins: 500,
+    unlockedGoodIds: ["GOOD_WHEAT", "GOOD_BREAD", "GOOD_TIMBER", "GOOD_PLANKS"],
+    hasSolvableOpenOrder: true,
+  });
+  expect(level5.map((order) => order.id)).toEqual(["ORD-EASY-BREAD", "ORD-MED-PLANKS", "ORD-SPEC-PLANKS"]);
+  expect(level5[1]).toMatchObject({ coins: 352, xp: 23 });
 });
 
 test("starter map is 24x24 over the four open chunks", () => {
