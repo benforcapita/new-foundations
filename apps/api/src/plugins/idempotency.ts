@@ -181,6 +181,23 @@ export async function runCommand(
       throw error;
     }
     if (effects.telemetry !== undefined) await progressQuests(ctx, input.cityId, effects.telemetry);
+    for (const entry of effects.ledger) {
+      if (entry.source === "goods_collected" && entry.delta > 0) await progressQuests(ctx, input.cityId, { name: "goods_produced", payload: { goodId: entry.resource, qty: entry.delta } });
+    }
+    if (city.tutorialState !== null) {
+      const event = effects.telemetry;
+      const step = city.tutorialState.step;
+      let next = step;
+      if (step === "place_house" && event?.name === "building_placed" && event.payload.definitionId === "B-001") next = "collect_wheat";
+      else if (step === "collect_wheat" && effects.ledger.some(e => e.resource === "GOOD_WHEAT" && e.delta > 0)) next = "supply_grocery";
+      else if (step === "supply_grocery" && event?.name === "business_supplied" && event.payload.definitionId === "B-004") next = "collect_coins";
+      else if (step === "collect_coins" && event?.name === "coins_collected") next = "build_bakery";
+      else if (step === "build_bakery" && event?.name === "building_placed" && event.payload.definitionId === "B-007") next = "tutorial_core_complete";
+      if (next !== step) {
+        await tx.update(cities).set({ tutorialState: { step: next, guideNpcId: "NPC-MIA" } }).where(eq(cities.id, input.cityId));
+        if (next === "tutorial_core_complete") await tx.insert(telemetryEvents).values({ playerId: input.actorId, sessionId: input.sessionId, name: "tutorial_core_complete", payload: {}, contentVersion: CONTENT_VERSION, cityLevel: city.level });
+      }
+    }
     const cityBalances = {
       coins: Number(city.coins),
       xp: Number(city.xp),

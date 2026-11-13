@@ -79,3 +79,11 @@ it("rerolls without consuming goods or granting rewards, and ignores closed orde
     }
   }
 });
+
+it("optimistically claims a completed quest once", () => {
+  const snapshot = { buildings: [], jobs: [], inventory: {}, city: { coins: 750, xp: 0 }, quests: [{ questId: "quest_early_bakery_01", periodKey: "-", status: "COMPLETED" }] } as unknown as Snapshot;
+  const command = { key: "1", name: "claim-quest", body: { questId: "quest_early_bakery_01", periodKey: "-" } } as const;
+  const result = composeSnapshot(snapshot, [command, command]);
+  expect(result.city).toMatchObject({ coins: 900, xp: 25 });
+  expect(result.quests[0]?.status).toBe("CLAIMED");
+});

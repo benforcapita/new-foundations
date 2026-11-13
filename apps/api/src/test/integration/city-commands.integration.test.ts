@@ -877,3 +877,66 @@ test("simultaneous collections preserve both payments to a shared host", async (
     await handle.pool.query("drop function qa_delay_host_update()");
   }
 });
+
+test("completed tutorial quest can be claimed only once", async () => {
+  const session = await guest();
+  expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const claim = await command(session, "claim-quest", { questId: "quest_tutorial_house", periodKey: "-" });
+  expect(claim.statusCode).toBe(200);
+  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 11 });
+  expect((await command(session, "claim-quest", { questId: "quest_tutorial_house", periodKey: "-" })).statusCode).not.toBe(200);
+  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 11 });
+});
+
+test.each([
+  ["quest_early_bakery_01", 150, 25],
+  ["quest_flower_street", 300, 60],
+])("claims %s once", async (questId, coins, xp) => {
+  const session = await guest();
+  await handle.pool.query("insert into quests (city_id, quest_id, period_key, track, status, step_index, step_state, started_at, completed_at, version) values ($1, $2, '-', 'story', 'COMPLETED', 7, '{}'::jsonb, now(), now(), 1)", [session.cityId, questId]);
+  const before = await cityRow(session.cityId);
+  expect((await command(session, "claim-quest", { questId, periodKey: "-" })).statusCode).toBe(200);
+  const after = await cityRow(session.cityId);
+  expect(after.xp).toBe(before.xp + xp);
+  expect(after.coins).toBeGreaterThanOrEqual(before.coins + coins);
+  if (questId === "quest_flower_street") {
+    const benches = await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'D-003' and removed_at is null", [session.cityId]);
+    expect(benches.rowCount).toBe(1);
+  }
+  expect((await command(session, "claim-quest", { questId, periodKey: "-" })).statusCode).toBe(409);
+  expect(await cityRow(session.cityId)).toEqual(after);
+  await assertLedgerReconciled(session.cityId);
+});
+
+test("tutorial steps and telemetry persist through the core commands", async () => {
+  const session = await guest();
+  const step = async () => (await handle.pool.query<{ tutorial_state: { step: string } }>("select tutorial_state from cities where id = $1", [session.cityId])).rows[0]?.tutorial_state.step;
+  expect(await step()).toBe("place_house");
+  expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
+  expect(await step()).toBe("collect_wheat");
+  const buildings = await handle.pool.query<{ id: string; definition_id: string }>("select id, definition_id from building_instances where city_id = $1 and ((definition_id = 'AG-001' and x = 0 and y = 0) or definition_id = 'B-004')", [session.cityId]);
+  const wheat = readString(buildings.rows.find(b => b.definition_id === "AG-001")?.id);
+  const grocery = readString(buildings.rows.find(b => b.definition_id === "B-004")?.id);
+  expect((await command(session, "collect", { instanceId: wheat })).statusCode).toBe(200);
+  expect(await step()).toBe("supply_grocery");
+  expect((await command(session, "supply-business", { instanceId: grocery })).statusCode).toBe(200);
+  expect(await step()).toBe("collect_coins");
+  advance(10_000);
+  expect((await command(session, "collect", { instanceId: grocery })).statusCode).toBe(200);
+  expect(await step()).toBe("build_bakery");
+  expect((await command(session, "place-building", { definitionId: "B-007", x: 2, y: 4, rotation: 0 })).statusCode).toBe(200);
+  expect(await step()).toBe("tutorial_core_complete");
+  const events = await handle.pool.query<{ name: string }>("select name from telemetry_events where player_id = (select owner_id from cities where id = $1)", [session.cityId]);
+  expect(events.rows.map(e => e.name)).toEqual(expect.arrayContaining(["tutorial_started", "building_placed", "goods_collected", "business_supplied", "coins_collected", "tutorial_core_complete"]));
+});
+
+test("Flower Street unlocks the bench for its final step and does not grant it twice", async () => {
+  const session = await guest();
+  await handle.pool.query("insert into quests (city_id, quest_id, period_key, track, status, step_index, step_state, started_at, version) values ($1, 'quest_flower_street', '-', 'story', 'ACTIVE', 6, '{\"0\":1,\"1\":3,\"2\":3,\"3\":1,\"4\":1,\"5\":1,\"6\":0}'::jsonb, now(), 1)", [session.cityId]);
+  expect((await command(session, "place-building", { definitionId: "D-003", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const quest = await handle.pool.query<{ status: string }>("select status from quests where city_id = $1 and quest_id = 'quest_flower_street'", [session.cityId]);
+  expect(quest.rows[0]?.status).toBe("COMPLETED");
+  expect((await command(session, "claim-quest", { questId: "quest_flower_street", periodKey: "-" })).statusCode).toBe(200);
+  const benches = await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'D-003' and removed_at is null", [session.cityId]);
+  expect(benches.rowCount).toBe(1);
+});

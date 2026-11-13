@@ -1,6 +1,7 @@
 import {
   STARTER_MAP,
   AGRICULTURE,
+  DECORATIONS,
   placeableFromBuilding,
   TERRAIN_ASSETS,
   agricultureById,
@@ -219,7 +220,9 @@ export class IsoScene extends Phaser.Scene {
     this.createGhost();
     const camera = this.cameras.main;
     const framed = cellCenter(8, 8);
-    camera.centerOn(framed.x, framed.y);
+    const previousAim = useSceneStore.getState().aim;
+    if (previousAim) { camera.setZoom(clampZoom(previousAim.zoom)); camera.centerOn(previousAim.x, previousAim.y); }
+    else camera.centerOn(framed.x, framed.y);
     camera.roundPixels = true;
     this.bindInput();
     this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPaint);
@@ -355,6 +358,12 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private drawBuildings(): void {
+    if (!this.isDemo()) for (const building of this.snapshot().buildings) {
+      const decoration = DECORATIONS.find(d => d.id === building.definitionId);
+      if (!decoration?.assetId) continue;
+      const size = rotatedFootprint(decoration.footprint.width, decoration.footprint.height, building.rotation);
+      placeAnchored(this, decoration.assetId, building.x, building.y, size.width, size.height, footprintDepth(building.x, building.y, size.width, size.height));
+    }
     for (const building of this.isDemo() ? demoBuildings() : liveBuildings(this.snapshot())) {
       const definition = buildingById(building.buildingId);
       const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, building.rotation);

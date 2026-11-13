@@ -1,8 +1,9 @@
 import { catalogAvailability, hasReady } from "./cityPanelState";
 import { useEffect, useRef, useState } from "react";
-import { AGRICULTURE, BUILDINGS, LEVELS, QUESTS, RECIPES, loadEnglishLocalization } from "@nf/shared";
+import { AGRICULTURE, BUILDINGS, DECORATIONS, LEVELS, QUESTS, RECIPES, canPlace, loadEnglishLocalization } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import { useCityStore } from "../api/store";
+import { livePlacementCity } from "../game/liveCity";
 import { usePlacementStore, useSceneStore } from "../game/scene-store";
 
 const labels = loadEnglishLocalization();
@@ -13,7 +14,7 @@ function feedback() {
   else { window.dispatchEvent(new CustomEvent("nf-fx", { detail: "collect" })); window.dispatchEvent(new CustomEvent("nf-fx", { detail: "xp" })); }
 }
 export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
-  const [panel, setPanel] = useState<"catalog" | "warehouse" | null>(null);
+  const [panel, setPanel] = useState<"catalog" | "warehouse" | "quests" | null>(null);
   const [undo, setUndo] = useState<string | null>(null);
   const [clock, setClock] = useState(Date.now());
   const timeBase = useRef({ server: snapshot?.serverNow, received: Date.now() });
@@ -44,10 +45,29 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       {xp != null && <progress aria-label="XP progress" value={snapshot?.city.xp ?? 0} max={xp} />}
       <span data-testid="hud-coins">Coins: {snapshot?.city.coins ?? 0}</span><span>Gems: {snapshot?.city.gems ?? 0}</span>
       <button type="button" onClick={() => setPanel("warehouse")}>Warehouse {snapshot ? `${total(snapshot)}/${snapshot.city.warehouseCap}` : "—"}</button>
-      <span>Quest: {quest ? label(QUESTS.find(q => q.id === quest.questId)?.nameKey ?? "", quest.questId) : "None"}</span>
+      <button type="button" data-testid="quest-tracker-open" onClick={() => setPanel("quests")}>Quest: {quest ? label(QUESTS.find(q => q.id === quest.questId)?.nameKey ?? "", quest.questId) : "None"}</button>
       <button type="button" data-testid="collect-all" disabled={!ready} onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect-all", body: {} }); feedback(); }}>Collect All (C)</button>
       <button type="button" data-testid="build-catalog-open" onClick={() => setPanel("catalog")}>Build</button>
     </section>
+    {snapshot && panel === "quests" && <section className="city-panel" data-testid="quest-tracker" aria-label="Quests">
+      <h2>Quests</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
+      {snapshot.quests.filter(q => q.status !== "CLAIMED").map(q => {
+        const def = QUESTS.find(item => item.id === q.questId);
+        return <article key={`${q.questId}:${q.periodKey}`} data-testid={`quest-card-${q.questId}`}>
+          <strong>{label(def?.nameKey ?? "", q.questId)}</strong> <span>{q.status}</span>
+          {def?.steps.map((step, index) => <div key={index}>{step.event.replaceAll("_", " ")}: {q.stepState[String(index)] ?? 0}/{step.amount}</div>)}
+          {q.questId === "quest_flower_street" && q.status === "ACTIVE" && q.stepState["5"] === 1 && q.stepState["6"] === 0 && <button type="button" data-testid="place-flower-bench" onClick={() => {
+            const bench = DECORATIONS.find(d => d.id === "D-003");
+            if (!bench) return;
+            const city = livePlacementCity(snapshot);
+            const definition = { id: bench.id, category: "decoration" as const, footprint: bench.footprint, costCoins: 0, unlockLevel: 1 };
+            const cell = snapshot.cells.find(c => canPlace(city, definition, c.x, c.y, 0).ok);
+            if (cell) enqueue({ key: crypto.randomUUID(), name: "place-building", body: { definitionId: "D-003", x: cell.x, y: cell.y, rotation: 0 } });
+          }}>Place Flower Street bench</button>}
+          {q.status === "COMPLETED" && <button type="button" data-testid={`quest-claim-${q.questId}`} onClick={() => { enqueue({ key: crypto.randomUUID(), name: "claim-quest", body: { questId: q.questId, periodKey: q.periodKey } }); feedback(); }}>Claim</button>}
+        </article>;
+      })}
+    </section>}
     {panel === "catalog" && snapshot && <section className="city-panel" aria-label="Build catalog"><h2>Build catalog</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
       {[...BUILDINGS.filter(b => !b.prebuilt), ...AGRICULTURE].map(d => {
         const { locked, affordable, cost } = catalogAvailability(snapshot, d);
@@ -58,7 +78,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       <button type="button" data-testid="details-move" onClick={() => { usePlacementStore.getState().select(definition.id); useSceneStore.getState().publish({ moveId: building.id, selectedId: null }); }}>Move</button>
       <button type="button" data-testid="details-remove" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "remove-building", body: { instanceId: building.id } }); setUndo(building.id); useSceneStore.getState().publish({ selectedId: null }); }}>Remove</button>
       {building.state === "NEEDS_SUPPLY" && <button type="button" data-testid="details-supply" onClick={() => enqueue({ key: crypto.randomUUID(), name: "supply-business", body: { instanceId: building.id } })}>Supply</button>}
-      {building.state === "READY_TO_COLLECT" && <button type="button" data-testid="details-collect" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.id } }); feedback(); }}>Collect</button>}
+      {(building.state === "READY_TO_COLLECT" || (building.definitionId === "B-004" && building.state === "ACTIVE")) && <button type="button" data-testid="details-collect" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.id } }); feedback(); }}>Collect</button>}
       {"stockInput" in definition && <p>Inputs: {definition.stockInput.map(i => `${i.goodId} ${i.qty} (stored ${snapshot.inventory[i.goodId] ?? 0})`).join(", ")}</p>}
       {"outputGoodId" in definition && <p>Output: {definition.outputQty} {definition.outputGoodId}</p>}
       {"category" in definition && definition.category === "production" && <div data-testid="production-queue"><h3>Production queue</h3><p>Slots: {snapshot.jobs.filter(j => j.buildingId === building.id).length}/{snapshot.city.level >= 5 ? 3 : 2}</p>

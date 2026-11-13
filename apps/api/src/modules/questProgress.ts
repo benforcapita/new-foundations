@@ -24,7 +24,12 @@ export async function progressQuests(ctx: CommandContext, cityId: string, event:
   }
   for (const definition of QUESTS) {
     if (rows.some((row) => row.questId === definition.id) || definition.prerequisites.length === 0 || !definition.prerequisites.every((id) => rows.some((row) => row.questId === id && (row.status === "COMPLETED" || row.status === "CLAIMED")))) continue;
-    await ctx.tx.insert(quests).values({ cityId, questId: definition.id, periodKey: "-", track: definition.track, status: "ACTIVE", stepIndex: 0, stepState: Object.fromEntries(definition.steps.map((_, index) => [String(index), 0])), startedAt: ctx.now, version: ctx.versionAfter }).onConflictDoNothing();
+    const initial = Object.fromEntries(definition.steps.map((_, index) => [String(index), 0]));
+    const first = definition.steps[0];
+    const progress = first ? advanceQuestStep(first, initial, 0, event) : null;
+    const index = progress?.index ?? 0;
+    const completed = index >= definition.steps.length;
+    await ctx.tx.insert(quests).values({ cityId, questId: definition.id, periodKey: "-", track: definition.track, status: completed ? "COMPLETED" : "ACTIVE", stepIndex: index, stepState: progress?.state ?? initial, startedAt: ctx.now, completedAt: completed ? ctx.now : null, version: ctx.versionAfter }).onConflictDoNothing();
   }
 }
 
@@ -35,6 +40,6 @@ export function advanceQuestStep(step: QuestDefinition["steps"][number], previou
     return actual === expected;
   });
   if (!matches) return null;
-  const state = { ...previous, [String(index)]: Math.min(step.amount, (previous[String(index)] ?? 0) + 1) };
+  const state = { ...previous, [String(index)]: Math.min(step.amount, (previous[String(index)] ?? 0) + (typeof event.payload.qty === "number" ? event.payload.qty : 1)) };
   return { state, index: (state[String(index)] ?? 0) >= step.amount ? index + 1 : index };
 }
