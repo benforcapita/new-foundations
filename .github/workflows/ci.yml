@@ -51,6 +51,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Secret scan
+        run: node tests/secret-scan.mjs
+
       - name: Typecheck
         run: pnpm typecheck
 
