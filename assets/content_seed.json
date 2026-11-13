@@ -1,0 +1,82 @@
+{
+  "items": [
+    {
+      "id": "B-001",
+      "nameKey": "building.cottage.name",
+      "category": "residential",
+      "footprint": {
+        "width": 2,
+        "height": 2
+      },
+      "cost": {
+        "coins": 180
+      },
+      "buildSeconds": 30,
+      "population": 8,
+      "rent": {
+        "coins": 32,
+        "seconds": 480
+      },
+      "assetId": "bld_res_cottage"
+    },
+    {
+      "id": "B-004",
+      "nameKey": "building.grocery.name",
+      "category": "commercial",
+      "footprint": {
+        "width": 2,
+        "height": 2
+      },
+      "cost": {
+        "coins": 500
+      },
+      "buildSeconds": 120,
+      "stockInput": {
+        "GOOD_BREAD": 3
+      },
+      "salesCycleSeconds": 600,
+      "coinYield": 110,
+      "assetId": "bld_com_grocery"
+    },
+    {
+      "id": "B-007",
+      "nameKey": "building.bakery.name",
+      "category": "production",
+      "footprint": {
+        "width": 2,
+        "height": 2
+      },
+      "cost": {
+        "coins": 350
+      },
+      "buildSeconds": 180,
+      "recipes": [
+        {
+          "input": {
+            "GOOD_WHEAT": 2
+          },
+          "output": {
+            "GOOD_BREAD": 3
+          },
+          "seconds": 360
+        }
+      ],
+      "assetId": "bld_prod_bakery"
+    },
+    {
+      "id": "B-009",
+      "nameKey": "building.townhall.name",
+      "category": "civic",
+      "footprint": {
+        "width": 4,
+        "height": 4
+      },
+      "cost": {
+        "coins": 0
+      },
+      "populationCap": 50,
+      "assetId": "bld_civic_townhall"
+    }
+  ],
+  "notes": "Seed game balance only. Validate through economy simulation; starter tutorial has exceptional instant first sale and grants 3 Bread."
+}
