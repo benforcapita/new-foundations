@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { CONTENT_VERSION, ORDER_TEMPLATES, goodById, orderReward } from "@nf/shared";
 import { apiErrorSchema, catalogResponseSchema, commandSuccessSchema, healthResponseSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
-import { lockCityIds } from "../../plugins/idempotency";
+import { lockCityIds, runCommand } from "../../plugins/idempotency";
 import { createDatabase, type DatabaseHandle } from "../../db/client";
 import { migrate } from "../../db/migrate";
 import { inventoryBalances } from "../../db/schema";
@@ -51,6 +51,8 @@ test("health, catalog, and CORS headers", async () => {
   expect(preview.statusCode).toBe(204);
   expect(preview.headers["access-control-allow-origin"]).toBe("https://new-foundations-git-main-ben.vercel.app");
   expect(preview.headers["access-control-allow-headers"]).toContain("Idempotency-Key");
+  expect(preview.headers["access-control-allow-headers"]).toContain("X-Content-Version");
+  expect(preview.headers["access-control-allow-headers"]).toContain("X-City-Version");
 
   const configured = await app.inject({
     method: "GET",
@@ -210,26 +212,13 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
   expect(solvable.rows).toHaveLength(2);
   expect(solvable.rows.every((row) => row.solvable)).toBe(true);
 
-  expect(snapshot.quests.map((quest) => quest.questId)).toEqual(
-    expect.arrayContaining([
-      "quest_tutorial_house",
-      "quest_tutorial_grocery",
-      "quest_tutorial_bakery",
-      "quest_early_bakery_01",
-      "quest_flower_street",
-    ]),
-  );
-  expect(snapshot.quests.every((quest) => quest.track === "story" && quest.periodKey === "-" && quest.status === "ACTIVE")).toBe(
-    true,
-  );
-  expect(snapshot.quests.find((quest) => quest.questId === "quest_flower_street")?.stepState).toEqual({
-    "0": 0,
-    "1": 0,
-    "2": 0,
-    "3": 0,
-    "4": 0,
-    "5": 0,
-    "6": 0,
+  expect(snapshot.quests).toHaveLength(1);
+  expect(snapshot.quests[0]).toMatchObject({
+    questId: "quest_tutorial_house",
+    track: "story",
+    periodKey: "-",
+    status: "ACTIVE",
+    stepState: { "0": 0 },
   });
 
   const resumed = await app.inject({ method: "POST", url: "/v1/auth/session", payload: { token } });
@@ -444,6 +433,124 @@ test("concurrent commands on one city each advance the city version", async () =
     session.cityId,
   ]);
   expect(Number(after.rows[0]?.version)).toBe(start + count);
+});
+
+test("a ledger-writing command records goods and coins balances", async () => {
+  const session = await guest();
+  const tokenHash = createHash("sha256").update(session.token).digest();
+  const actor = await handle.pool.query<{ id: string; user_id: string }>(
+    "select id, user_id from sessions where token_hash = $1 and revoked_at is null",
+    [tokenHash],
+  );
+  const row = actor.rows[0];
+  if (row === undefined) {
+    throw new Error("session is missing");
+  }
+
+  const breadDelta = 2;
+  const coinDelta = 100;
+  const commandId = randomUUID();
+  const outcome = await runCommand(handle.db, {
+    actorId: row.user_id,
+    sessionId: row.id,
+    cityId: session.cityId,
+    cityIds: [session.cityId],
+    commandId,
+    requestHash: sha256(commandId),
+    fromVersion: 1,
+    now: new Date(),
+    cityLevel: 1,
+    apply: () =>
+      Promise.resolve({
+        ledger: [
+          { resource: "GOOD_BREAD", delta: breadDelta, source: "integration_grant" },
+          { resource: "COINS", delta: coinDelta, source: "integration_grant" },
+        ],
+        result: { granted: true },
+      }),
+  });
+
+  expect(outcome.replayed).toBe(false);
+  expect(outcome.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(outcome.body)).toMatchObject({
+    cityVersion: 2,
+    result: { granted: true },
+    delta: { fromVersion: 1, toVersion: 2, inventory: { GOOD_BREAD: 3 + breadDelta } },
+  });
+
+  const written = await handle.pool.query<{ resource: string; delta: number; balance_after: number }>(
+    `select resource, delta::int as delta, balance_after::int as balance_after
+     from inventory_ledger
+     where city_id = $1 and command_id = $2
+     order by id`,
+    [session.cityId, commandId],
+  );
+  expect(written.rows).toEqual([
+    { resource: "GOOD_BREAD", delta: breadDelta, balance_after: 5 },
+    { resource: "COINS", delta: coinDelta, balance_after: 850 },
+  ]);
+
+  const balances = await handle.db.select().from(inventoryBalances).where(eq(inventoryBalances.cityId, session.cityId));
+  expect(balances).toMatchObject([{ cityId: session.cityId, goodId: "GOOD_BREAD", qty: 5 }]);
+
+  const totals = await handle.pool.query<{
+    bread_sum: number;
+    bread_qty: number;
+    bread_balance_after: number;
+    coin_sum: number;
+    city_coins: number;
+    coin_balance_after: number;
+  }>(
+    `select
+       (select coalesce(sum(delta), 0)::int from inventory_ledger where city_id = $1 and resource = 'GOOD_BREAD') as bread_sum,
+       (select qty from inventory_balances where city_id = $1 and good_id = 'GOOD_BREAD') as bread_qty,
+       (select balance_after::int from inventory_ledger where city_id = $1 and resource = 'GOOD_BREAD' order by id desc limit 1) as bread_balance_after,
+       (select coalesce(sum(delta), 0)::int from inventory_ledger where city_id = $1 and resource = 'COINS') as coin_sum,
+       (select coins::int from cities where id = $1) as city_coins,
+       (select balance_after::int from inventory_ledger where city_id = $1 and resource = 'COINS' order by id desc limit 1) as coin_balance_after`,
+    [session.cityId],
+  );
+  const total = totals.rows[0];
+  expect(total).toEqual({
+    bread_sum: 5,
+    bread_qty: 5,
+    bread_balance_after: 5,
+    coin_sum: 850,
+    city_coins: 850,
+    coin_balance_after: 850,
+  });
+  expect(total?.bread_sum).toBe(total?.bread_qty);
+  expect(total?.bread_balance_after).toBe(total?.bread_sum);
+  expect(total?.coin_sum).toBe(total?.city_coins);
+  expect(total?.coin_balance_after).toBe(total?.coin_sum);
+});
+
+test("a session with revoked_at set cannot authenticate", async () => {
+  const session = await guest();
+  const tokenHash = createHash("sha256").update(session.token).digest();
+  const revoked = await handle.pool.query<{ id: string }>(
+    "update sessions set revoked_at = now() where token_hash = $1 returning id",
+    [tokenHash],
+  );
+  expect(revoked.rows).toHaveLength(1);
+
+  const current = await app.inject({
+    method: "GET",
+    url: "/v1/cities/current",
+    headers: { authorization: session.authorization },
+  });
+  expect(current.statusCode).toBe(401);
+  expect(apiErrorSchema.parse(current.json()).error.code).toBe("UNAUTHORIZED");
+
+  const resumed = await app.inject({ method: "POST", url: "/v1/auth/session", payload: { token: session.token } });
+  expect(resumed.statusCode).toBe(401);
+  expect(apiErrorSchema.parse(resumed.json()).error.code).toBe("UNAUTHORIZED");
+
+  const stillThere = await handle.pool.query<{ revoked_at: Date | null }>(
+    "select revoked_at from sessions where id = $1",
+    [revoked.rows[0]?.id],
+  );
+  expect(stillThere.rows[0]?.revoked_at).toBeInstanceOf(Date);
 });
 
 test("unknown routes use the error envelope", async () => {

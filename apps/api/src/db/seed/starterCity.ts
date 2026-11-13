@@ -39,7 +39,6 @@ type Placement = {
   readonly outputReady: { readonly goodId: string; readonly qty: number } | Record<string, never>;
 };
 
-const SEEDED_QUEST_IDS = ["quest_tutorial_house", "quest_early_bakery_01", "quest_flower_street"] as const;
 const STARTER_CHUNKS: readonly (readonly [number, number])[] = [
   [0, 0],
   [1, 0],
@@ -283,25 +282,11 @@ function catalogOrder(cityId: string, slot: number, template: OrderTemplate) {
 }
 
 function seededQuests(): readonly QuestDefinition[] {
-  const byId = new Map(QUESTS.map((quest) => [quest.id, quest]));
-  const include = new Set<string>();
-  const visit = (id: string): void => {
-    if (include.has(id)) {
-      return;
-    }
-    const quest = byId.get(id);
-    if (quest === undefined) {
-      throw new Error(`quest ${id} is not in the catalog`);
-    }
-    for (const prerequisite of quest.prerequisites) {
-      visit(prerequisite);
-    }
-    include.add(id);
-  };
-  for (const id of SEEDED_QUEST_IDS) {
-    visit(id);
+  const root = QUESTS.find((quest) => quest.id === "quest_tutorial_house");
+  if (root === undefined || root.track !== "story" || root.prerequisites.length !== 0) {
+    throw new Error("quest_tutorial_house must be the root story quest");
   }
-  return QUESTS.filter((quest) => include.has(quest.id));
+  return [root];
 }
 
 function initialStepState(steps: readonly unknown[]): Record<string, number> {
