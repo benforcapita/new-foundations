@@ -128,7 +128,7 @@ function presentedJob(row: typeof productionJobs.$inferSelect): PresentedJob {
   };
 }
 
-function presentedOrder(row: typeof orderInstances.$inferSelect): PresentedOrder {
+export function presentedOrder(row: typeof orderInstances.$inferSelect): PresentedOrder {
   return {
     id: row.id,
     slot: row.slot,
@@ -154,7 +154,7 @@ function presentedTrain(row: typeof trainShipments.$inferSelect): PresentedTrain
   };
 }
 
-function presentedFranchise(row: typeof franchises.$inferSelect): PresentedFranchise {
+export function presentedFranchise(row: typeof franchises.$inferSelect): PresentedFranchise {
   return {
     id: row.id,
     ownerCity: row.ownerCity,
@@ -167,7 +167,7 @@ function presentedFranchise(row: typeof franchises.$inferSelect): PresentedFranc
   };
 }
 
-function presentedQuest(row: typeof quests.$inferSelect): PresentedQuest {
+export function presentedQuest(row: typeof quests.$inferSelect): PresentedQuest {
   return {
     questId: row.questId,
     periodKey: row.periodKey,

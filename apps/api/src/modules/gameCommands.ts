@@ -1,3 +1,7 @@
+import { orderCommand } from "./orders";
+import { eq } from "drizzle-orm";
+import { cities, cityCells } from "../db/schema";
+import { planExpansion } from "../economy/expansion";
 import { randomUUID } from "node:crypto";
 import { commandBodySchemas, placeBuildingCommandSchema } from "@nf/shared/schemas";
 import { findPlaceable } from "../economy/catalog";
@@ -25,6 +29,9 @@ const CITY_COMMANDS = [
   "start-production",
   "cancel-production",
   "supply-business",
+  "expand-land",
+  "fulfill-order",
+  "reroll-order",
 ] as const;
 
 export type CityCommandName = (typeof CITY_COMMANDS)[number];
@@ -42,6 +49,13 @@ export function assertCityCommand(name: string): CityCommandName {
 
 export function assertCityCommandBody(name: CityCommandName, body: unknown): void {
   switch (name) {
+    case "fulfill-order":
+    case "reroll-order":
+      parseCommand(commandBodySchemas[name], body);
+      return;
+    case "expand-land":
+      parseCommand(commandBodySchemas["expand-land"], body);
+      return;
     case "place-building":
       parsePlace(body);
       return;
@@ -74,6 +88,8 @@ export function assertCityCommandBody(name: CityCommandName, body: unknown): voi
 }
 
 export async function runCityCommand(ctx: CommandContext, cityId: string, name: CityCommandName, body: unknown): Promise<CommandEffects> {
+  if (name === "expand-land") return expandLand(ctx, cityId, body);
+  if (name === "fulfill-order" || name === "reroll-order") return orderCommand(ctx, cityId, name, parseCommand(commandBodySchemas[name], body).orderId);
   const plan = planCityCommand(await loadWorld(ctx.tx, cityId, ctx.now), name, body);
   if (!plan.ok) {
     throw new ApiError(plan.status, plan.code, plan.message, { cityVersion: ctx.cityVersion, delta: ctx.failureDelta });
@@ -94,7 +110,7 @@ export async function runCityCommand(ctx: CommandContext, cityId: string, name: 
   };
 }
 
-export function planCityCommand(world: World, name: CityCommandName, body: unknown): Plan {
+export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order">, body: unknown): Plan {
   const ids = { instanceId: randomUUID(), jobId: randomUUID(), undoToken: randomUUID() };
   switch (name) {
     case "place-building":
@@ -146,4 +162,18 @@ function parsePlace(body: unknown): { definitionId: string; x: number; y: number
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function expandLand(ctx: CommandContext, cityId: string, body: unknown): Promise<CommandEffects> {
+  const command = parseCommand(commandBodySchemas["expand-land"], body);
+  const world = await loadWorld(ctx.tx, cityId, ctx.now);
+  const plan = planExpansion({ chunks: world.city.unlockedChunks, x: command.chunkX, y: command.chunkY, tutorialComplete: world.city.tutorialState?.step === "tutorial_core_complete", coins: world.city.coins });
+  if (!plan.ok) throw new ApiError(422, plan.code === "INSUFFICIENT_COINS" ? plan.code : "VALIDATION", "Land expansion is unavailable", { details: { reason: plan.code } });
+  await ctx.tx.update(cities).set({ unlockedBounds: [...world.city.unlockedChunks, [command.chunkX, command.chunkY]] }).where(eq(cities.id, cityId));
+  const cells: { cityId: string; x: number; y: number; terrainId: string; ownerClaimed: boolean; cellRole: "terrain" }[] = [];
+  for (let y = command.chunkY * 12; y < (command.chunkY + 1) * 12; y += 1) {
+    for (let x = command.chunkX * 12; x < (command.chunkX + 1) * 12; x += 1) cells.push({ cityId, x, y, terrainId: "grass", ownerClaimed: true, cellRole: "terrain" });
+  }
+  await ctx.tx.insert(cityCells).values(cells);
+  return { ledger: [{ resource: "COINS", delta: -plan.cost, source: "expansion_claimed" }], result: { ...command, cost: plan.cost }, telemetry: { name: "expansion_claimed", payload: { ...command } } };
 }
