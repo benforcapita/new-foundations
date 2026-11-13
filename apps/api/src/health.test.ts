@@ -1,4 +1,4 @@
-import { healthReport } from "@nf/shared";
+import { CONTENT_VERSION, healthReport } from "@nf/shared";
 import { getTableName } from "drizzle-orm";
 import { expect, test } from "vitest";
 import { buildApp } from "./app";
@@ -17,4 +17,15 @@ test("GET /health reports the api service", async () => {
 
 test("schema_meta is the drizzle table used for integration", () => {
   expect(getTableName(schemaMeta)).toBe("schema_meta");
+});
+
+test("GET /healthz reports the database down when the app has no pool", async () => {
+  const app = buildApp({ logger: false });
+  try {
+    const response = await app.inject({ method: "GET", url: "/healthz" });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ ok: false, db: "down", version: CONTENT_VERSION });
+  } finally {
+    await app.close();
+  }
 });
