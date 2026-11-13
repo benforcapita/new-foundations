@@ -471,6 +471,55 @@ test("snapshot reloads when the client version is outside the retention window",
   expect(wantsFullSnapshot({ sinceVersion: 1, cityVersion: 200, updatedAtMs: NOW, nowMs: NOW })).toBe(true);
 });
 
+test.each([13, 24, 48])("rent beyond the offline cap is discarded after %i hours", (hours) => {
+  const home = building({ id: "home", definitionId: "B-001", x: 12, y: 12, state: "ACTIVE", lastCollectedAt: NOW - hours * 3_600_000 });
+  const world = withBuilding(grassWorld(), home);
+  const first = planCollect(world, { instanceId: home.id });
+  expect(first.ok).toBe(true);
+  if (!first.ok) return;
+  expect(first.result).toMatchObject({ coins: 2880 });
+  const second = planCollect(withBuilding(world, must(first.buildings[0], "collected home")), { instanceId: home.id });
+  expect(second).toMatchObject({ ok: true, result: { coins: 0 }, ledger: [] });
+});
+
+test("removed buildings cannot be refunded twice or collected", () => {
+  const home = building({ id: "home", definitionId: "B-001", x: 12, y: 12, state: "ACTIVE", lastCollectedAt: NOW - 3_600_000, stock: { goods: {}, pendingCoins: 50, tutorialCycle: false, tutorialUsed: false, paidCoins: 100 } });
+  const world = withBuilding(grassWorld(), home);
+  const first = planRemove(world, { instanceId: home.id });
+  expect(first).toMatchObject({ ok: true, result: { refund: 50 } });
+  if (!first.ok) return;
+  const removedWorld = withBuilding(world, must(first.buildings[0], "removed home"));
+  expect(planRemove(removedWorld, { instanceId: home.id })).toMatchObject({ ok: false, code: "STATE_CHANGED" });
+  expect(planCollect({ ...removedWorld, buildings: removedWorld.buildings.filter((entry) => entry.id === home.id) }, {})).toMatchObject({ ok: true, result: { coins: 0 }, ledger: [] });
+});
+
+test("removal uses paid coins and undo requires enough coins", () => {
+  const home = building({ id: "home", definitionId: "B-001", x: 12, y: 12, state: "ACTIVE", stock: { goods: {}, pendingCoins: 0, tutorialCycle: false, tutorialUsed: false, paidCoins: 70 } });
+  const world = withBuilding(grassWorld({ coins: 34 }), home);
+  const removed = planRemove(world, { instanceId: home.id });
+  expect(removed).toMatchObject({ ok: true, result: { refund: 35 }, ledger: [{ delta: 35 }] });
+  if (!removed.ok) return;
+  const undo = planRemove(withBuilding(world, must(removed.buildings[0], "removed home")), { instanceId: home.id, undo: true });
+  expect(undo).toMatchObject({ ok: false, code: "INSUFFICIENT_COINS" });
+});
+
+test("a full production queue rejects another job and a completed job cannot be cancelled", () => {
+  const bakery = building({ id: "bakery", definitionId: "B-007", x: 12, y: 12, state: "ACTIVE" });
+  const world = { ...withBuilding(grassWorld(), bakery), balances: { GOOD_WHEAT: 10 } };
+  const first = planStartProduction(world, { instanceId: bakery.id, recipeId: "RCP-BREAD" }, IDS);
+  if (!first.ok) throw new Error("first job failed");
+  const job = must(first.jobs[0], "job");
+  const queued = withJobs(world, [job, { ...job, id: "second", slot: 1 }]);
+  expect(planStartProduction(queued, { instanceId: bakery.id, recipeId: "RCP-BREAD" }, IDS)).toMatchObject({ ok: false, code: "STATE_CHANGED" });
+  expect(planCancelProduction(withJob(world, { ...job, movedToOutputAt: NOW }), { instanceId: bakery.id, jobId: job.id })).toMatchObject({ ok: false, code: "STATE_CHANGED" });
+});
+
+test("supply does not exceed the business input capacity", () => {
+  const grocery = building({ id: "grocery", definitionId: "B-004", x: 12, y: 12, state: "NEEDS_SUPPLY", stock: { goods: { GOOD_WHEAT: 8 }, pendingCoins: 0, tutorialCycle: false, tutorialUsed: false } });
+  const result = planSupply({ ...withBuilding(grassWorld(), grocery), balances: { GOOD_BREAD: 9 } }, { instanceId: grocery.id });
+  expect(result).toMatchObject({ ok: true, result: { supplied: { GOOD_BREAD: 1 } }, ledger: [{ resource: "GOOD_BREAD", delta: -1 }] });
+});
+
 function grassWorld(overrides?: Partial<World["city"]> & { coins?: number; population?: number }): World {
   const cells: WorldCell[] = [];
   for (let y = 0; y < 24; y += 1) {

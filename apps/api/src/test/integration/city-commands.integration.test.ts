@@ -455,6 +455,12 @@ test("snapshot sinceVersion returns a delta inside the retention window and a fu
   const snapshot = snapshotSchema.parse(full.json());
   expect(snapshot.cells).toHaveLength(576);
   expect(snapshot.cityVersion).toBe(1);
+  const future = await app.inject({
+    method: "GET",
+    url: `/v1/cities/${session.cityId}/snapshot?sinceVersion=999`,
+    headers: { authorization: session.authorization },
+  });
+  expect(future.statusCode).toBe(400);
   const placed = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 });
   expect(placed.statusCode).toBe(200);
   const instanceId = readString(asRecord(commandSuccessSchema.parse(placed.json()).result).instanceId);

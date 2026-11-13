@@ -28,6 +28,9 @@ export async function loadCitySnapshot(
   if (city === undefined) {
     throw new ApiError(404, "NOT_FOUND", "City not found");
   }
+  if (sinceVersion !== null && sinceVersion > Number(city.version)) {
+    throw new ApiError(400, "VALIDATION", "sinceVersion cannot exceed the city version");
+  }
   if (wantsFullSnapshot({ sinceVersion, cityVersion: Number(city.version), updatedAtMs: city.updatedAt.getTime(), nowMs: now.getTime() })) {
     return loadCurrentCity(db, cityId, now);
   }
