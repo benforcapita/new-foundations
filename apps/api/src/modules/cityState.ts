@@ -1,3 +1,4 @@
+import { presentedOrder, presentedFranchise, presentedQuest } from "./snapshot";
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { TERRAIN_KINDS, type TerrainKind } from "@nf/shared/content";
 import { BUILDING_STATES, type BuildingState } from "@nf/shared/rules";
@@ -14,7 +15,7 @@ import type { Plan } from "../economy/plan";
 import { buildingLevel, resolveTimers } from "../economy/timers";
 import type { World, WorldBuilding, WorldCell, WorldJob, WorldQuest } from "../economy/model";
 import type { Database } from "../db/client";
-import { buildingCells, buildingInstances, cities, cityCells, inventoryBalances, productionJobs, quests } from "../db/schema";
+import { buildingCells, buildingInstances, cities, cityCells, franchises, inventoryBalances, orderInstances, productionJobs, quests } from "../db/schema";
 import { ApiError } from "../errors";
 import {
   presentCityHeader,
@@ -132,7 +133,13 @@ export async function readChangedDelta(
     }
     active.push(toPresentedBuilding(building));
   }
+  const changedOrders = await tx.select().from(orderInstances).where(and(eq(orderInstances.cityId, city.id), gt(orderInstances.version, fromVersion)));
+  const changedQuests = await tx.select().from(quests).where(and(eq(quests.cityId, city.id), gt(quests.version, fromVersion)));
+  const changedFranchises = await tx.select().from(franchises).where(and(eq(franchises.ownerCity, city.id), gt(franchises.version, fromVersion)));
   return presentDelta({
+    orders: changedOrders.map(presentedOrder),
+    quests: changedQuests.map(presentedQuest),
+    franchises: changedFranchises.map(presentedFranchise),
     fromVersion,
     toVersion,
     inventory,

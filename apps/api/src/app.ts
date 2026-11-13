@@ -1,3 +1,4 @@
+import { franchiseCommand, franchiseHosts } from "./modules/franchise";
 import { healthReport } from "@nf/shared";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { DatabaseHandle } from "./db/client";
@@ -44,6 +45,22 @@ export function buildApp(options: AppOptions): FastifyInstance {
   const database = options.database?.db;
   if (database !== undefined) {
     registerAuth(app, database);
+    app.get("/v1/franchises/hosts", async (request) => {
+      await authenticate(database, request.headers.authorization);
+      return franchiseHosts(database);
+    });
+    app.post("/v1/franchises/request", async (request, reply) => {
+      const actor = await authenticate(database, request.headers.authorization);
+      await franchiseCommand(database, limiter, actor, request, reply, clock(), "request");
+    });
+    app.post("/v1/franchises/:id/supply", async (request, reply) => {
+      const actor = await authenticate(database, request.headers.authorization);
+      await franchiseCommand(database, limiter, actor, request, reply, clock(), "supply", routeParam(request.params, "id"));
+    });
+    app.post("/v1/franchises/:id/collect", async (request, reply) => {
+      const actor = await authenticate(database, request.headers.authorization);
+      await franchiseCommand(database, limiter, actor, request, reply, clock(), "collect", routeParam(request.params, "id"));
+    });
     app.get("/v1/cities/current", async (request) => {
       const actor = await authenticate(database, request.headers.authorization);
       return loadCurrentCity(database, actor.cityId, clock());

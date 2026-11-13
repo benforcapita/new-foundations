@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
 import { PASSIVE_CAP_SECONDS } from "@nf/shared";
 import { apiErrorSchema, commandSuccessSchema, deltaSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
+import { lockCityIds } from "../../plugins/idempotency";
 import { createDatabase, type DatabaseHandle } from "../../db/client";
 import { migrate } from "../../db/migrate";
 import { seedNpcCities } from "../../db/seed/npcCities";
@@ -18,6 +19,7 @@ const connectionString = databaseUrl;
 let handle: DatabaseHandle;
 let now = new Date("2026-11-13T12:00:00.000Z");
 let app: ReturnType<typeof buildApp>;
+const testFranchises: string[] = [];
 
 beforeAll(async () => {
   handle = createDatabase(connectionString);
@@ -29,6 +31,10 @@ beforeAll(async () => {
     clock: () => now,
     rateLimit: { burst: 500, perMinute: 5000 },
   });
+});
+
+afterEach(async () => {
+  for (const id of testFranchises.splice(0)) await handle.pool.query("delete from franchises where id = $1", [id]);
 });
 
 afterAll(async () => {
@@ -518,6 +524,145 @@ test("a second collect drops rent past the twelve hour cap", async () => {
   await assertLedgerReconciled(session.cityId);
 });
 
+test("US-007 expansion enforces its milestone, adjacency, cost and cap", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set coins = 1750 where id = $1", [session.cityId]);
+  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'COINS', 1000, 1750, 'integration_grant')", [session.cityId]);
+  const blocked = await command(session, "expand-land", { chunkX: 2, chunkY: 0 });
+  expect(blocked.statusCode).toBe(422);
+  expect(asRecord(asRecord(asRecord(blocked.json()).error).details).reason).toBe("TUTORIAL_INCOMPLETE");
+  expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const grocery = await handle.pool.query<{ id: string }>("select id from building_instances where city_id = $1 and definition_id = 'B-004'", [session.cityId]);
+  expect((await command(session, "supply-business", { instanceId: readString(grocery.rows[0]?.id) })).statusCode).toBe(200);
+  expect((await command(session, "place-building", { definitionId: "B-007", x: 2, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const diagonal = await command(session, "expand-land", { chunkX: 2, chunkY: 2 });
+  expect(diagonal.statusCode).toBe(422);
+  const expanded = await command(session, "expand-land", { chunkX: 2, chunkY: 0 });
+  expect(expanded.statusCode, JSON.stringify(expanded.json())).toBe(200);
+  const cells = await handle.pool.query<{ count: string }>("select count(*)::text as count from city_cells where city_id = $1", [session.cityId]);
+  expect(cells.rows[0]?.count).toBe("720");
+  expect((await cityRow(session.cityId)).coins).toBe(750);
+  expect((await command(session, "expand-land", { chunkX: 3, chunkY: 0 })).statusCode).toBe(422);
+  const event = await handle.pool.query<{ count: string }>("select count(*)::text as count from telemetry_events where name = 'expansion_claimed' and player_id = (select owner_id from cities where id = $1)", [session.cityId]);
+  expect(event.rows[0]?.count).toBe("1");
+  await assertLedgerReconciled(session.cityId);
+  const host = await handle.pool.query<{ id: string }>("select id from cities where npc_key = 'dana_city'");
+  await assertLedgerReconciled(readString(host.rows[0]?.id));
+});
+
+test("US-005 and US-006 fulfill and reroll the order board idempotently", async () => {
+  const session = await guest();
+  const host = await handle.pool.query<{ id: string }>("select id from cities where npc_key = 'dana_city'");
+  await handle.pool.query("update cities set xp = 49 where id = $1", [session.cityId]);
+  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'XP', 49, 49, 'integration_setup')", [session.cityId]);
+  const order = await handle.pool.query<{ id: string }>("select id from order_instances where city_id = $1 and template_id = 'ORD-T-001' and status = 'OPEN'", [session.cityId]);
+  const orderId = readString(order.rows[0]?.id);
+  const key = randomUUID();
+  const fulfilled = await command(session, "fulfill-order", { orderId }, key);
+  expect(fulfilled.statusCode, JSON.stringify(fulfilled.json())).toBe(200);
+  for (let i = 0; i < 10; i += 1) expect((await command(session, "fulfill-order", { orderId }, key)).json()).toEqual(fulfilled.json());
+  const wrongCommand = await command(session, "reroll-order", { orderId }, key);
+  expect(wrongCommand.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(wrongCommand.json()).error.code).toBe("IDEMPOTENCY_KEY_REUSED");
+  expect(commandSuccessSchema.parse(fulfilled.json()).delta.orders.some((item) => item.status === "OPEN")).toBe(true);
+  const open = await handle.pool.query<{ id: string; solvable: boolean }>("select id, solvable from order_instances where city_id = $1 and status = 'OPEN' order by slot", [session.cityId]);
+  expect(open.rows).toHaveLength(3);
+  expect(open.rows.every((row) => row.solvable)).toBe(true);
+  expect((await cityRow(session.cityId))).toMatchObject({ coins: 930, xp: 61 });
+  const resources = await handle.pool.query<{ level: number; civic_stars: number; gems: number }>("select level, civic_stars, gems from cities where id = $1", [session.cityId]);
+  expect(resources.rows[0]).toEqual({ level: 2, civic_stars: 1, gems: 0 });
+  const event = await handle.pool.query<{ count: string }>("select count(*)::text as count from telemetry_events where name = 'order_completed' and player_id = (select owner_id from cities where id = $1)", [session.cityId]);
+  expect(event.rows[0]?.count).toBe("1");
+  await handle.pool.query("update inventory_balances set qty = 3 where city_id = $1 and good_id = 'GOOD_BREAD'", [session.cityId]);
+  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'GOOD_BREAD', 3, 3, 'integration_setup')", [session.cityId]);
+  expect((await command(session, "fulfill-order", { orderId: readString(open.rows[0]?.id) })).statusCode).toBe(200);
+  const stars = await handle.pool.query<{ civic_stars: number }>("select civic_stars from cities where id = $1", [session.cityId]);
+  expect(stars.rows[0]?.civic_stars).toBe(2);
+  const rerollId = readString(open.rows[1]?.id);
+  expect((await command(session, "reroll-order", { orderId: rerollId })).statusCode).toBe(200);
+  const next = await handle.pool.query<{ id: string }>("select id from order_instances where city_id = $1 and slot = 1 and status = 'OPEN'", [session.cityId]);
+  const cooldown = await command(session, "reroll-order", { orderId: readString(next.rows[0]?.id) });
+  expect(cooldown.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(cooldown.json()).error.code).toBe("REROLL_COOLDOWN");
+  advance(900_000);
+  expect((await command(session, "reroll-order", { orderId: readString(next.rows[0]?.id) })).statusCode).toBe(200);
+  await assertLedgerReconciled(session.cityId);
+  await assertLedgerReconciled(readString(host.rows[0]?.id));
+});
+
+test("US-008 and US-009 franchise supply and settlement reconcile both cities", async () => {
+  const session = await guest();
+  const hosts = await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: session.authorization } });
+  expect(hosts.statusCode).toBe(200);
+  const data = hosts.json() as { hosts: { cityId: string; npcKey: string; plots: { plotId: string }[] }[] };
+  const host = data.hosts.find((item) => item.npcKey === "dana_city");
+  if (host === undefined || host.plots[0] === undefined) throw new Error("Dana plot missing");
+  expect(await lockCityIds(handle.db, [host.cityId, session.cityId])).toEqual([host.cityId, session.cityId].sort());
+  const post = async (path: string, body: object, key = randomUUID()) => app.inject({ method: "POST", url: path, headers: { authorization: session.authorization, "idempotency-key": key }, payload: body });
+  const requested = await post("/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[0].plotId, businessDefinitionId: "B-004" });
+  expect(requested.statusCode, requested.body).toBe(200);
+  const franchiseId = readString(asRecord(asRecord(requested.json()).result).franchiseId);
+  testFranchises.push(franchiseId);
+  const second = await post("/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[0].plotId, businessDefinitionId: "B-004" });
+  expect(second.statusCode).toBe(422);
+  expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const grocery = await handle.pool.query<{ id: string }>("select id from building_instances where city_id = $1 and definition_id = 'B-004'", [session.cityId]);
+  expect((await command(session, "supply-business", { instanceId: readString(grocery.rows[0]?.id) })).statusCode).toBe(200);
+  await handle.pool.query("update inventory_balances set qty = 6 where city_id = $1 and good_id = 'GOOD_BREAD'", [session.cityId]);
+  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'GOOD_BREAD', 6, 6, 'integration_setup')", [session.cityId]);
+  const key = randomUUID();
+  const supplied = await post(`/v1/franchises/${franchiseId}/supply`, { cycles: 2 }, key);
+  expect(supplied.statusCode, supplied.body).toBe(200);
+  for (let i = 0; i < 10; i += 1) expect((await post(`/v1/franchises/${franchiseId}/supply`, { cycles: 2 }, key)).json()).toEqual(supplied.json());
+  const quest = await handle.pool.query<{ status: string }>("select status from quests where city_id = $1 and quest_id = 'quest_dana_franchise'", [session.cityId]);
+  expect(quest.rows[0]?.status).toBe("COMPLETED");
+  const early = await post(`/v1/franchises/${franchiseId}/collect`, {});
+  expect(asRecord(asRecord(early.json()).result)).toMatchObject({ ownerAmount: 0, hostAmount: 0, total: 0 });
+  advance(2_699_000);
+  expect(asRecord(asRecord((await post(`/v1/franchises/${franchiseId}/collect`, {})).json()).result).total).toBe(0);
+  advance(1_000);
+  const collected = await post(`/v1/franchises/${franchiseId}/collect`, {});
+  expect(collected.statusCode, collected.body).toBe(200);
+  expect(asRecord(asRecord(collected.json()).result)).toMatchObject({ ownerAmount: 66, hostAmount: 44, total: 110 });
+  const entries = await handle.pool.query<{ city_id: string; delta: string }>("select city_id, delta::text from inventory_ledger where ref_id = $1 and source = 'franchise_collect' order by city_id", [franchiseId]);
+  expect(entries.rows).toHaveLength(2);
+  expect(Number(entries.rows.find((row) => row.city_id === session.cityId)?.delta)).toBe(66);
+  expect(Number(entries.rows.find((row) => row.city_id === host.cityId)?.delta)).toBe(44);
+  expect(entries.rows.reduce((sum, row) => sum + Number(row.delta), 0)).toBe(110);
+  expect(asRecord(asRecord((await post(`/v1/franchises/${franchiseId}/collect`, {})).json()).result).total).toBe(0);
+  advance(2_700_000);
+  expect(asRecord(asRecord((await post(`/v1/franchises/${franchiseId}/collect`, {})).json()).result).total).toBe(110);
+  await assertLedgerReconciled(session.cityId);
+  await assertLedgerReconciled(host.cityId);
+});
+
+test("tutorial quests reach the expansion milestone through normal commands", async () => {
+  const session = await guest();
+  const host = await handle.pool.query<{ id: string }>("select id from cities where npc_key = 'dana_city'");
+  expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const grocery = await handle.pool.query<{ id: string }>("select id from building_instances where city_id = $1 and definition_id = 'B-004'", [session.cityId]);
+  expect((await command(session, "supply-business", { instanceId: readString(grocery.rows[0]?.id) })).statusCode).toBe(200);
+  expect((await command(session, "place-building", { definitionId: "B-007", x: 2, y: 4, rotation: 0 })).statusCode).toBe(200);
+  const city = await handle.pool.query<{ tutorial_state: { step: string } }>("select tutorial_state from cities where id = $1", [session.cityId]);
+  expect(city.rows[0]?.tutorial_state.step).toBe("tutorial_core_complete");
+  await assertLedgerReconciled(session.cityId);
+  await assertLedgerReconciled(readString(host.rows[0]?.id));
+});
+
+test("low coins and an unsolvable board produce a recovery order", async () => {
+  const session = await guest();
+  const host = await handle.pool.query<{ id: string }>("select id from cities where npc_key = 'dana_city'");
+  await handle.pool.query("update cities set coins = 100 where id = $1", [session.cityId]);
+  await handle.pool.query("insert into inventory_ledger (city_id, resource, delta, balance_after, source) values ($1, 'COINS', -650, 100, 'integration_setup'), ($1, 'GOOD_BREAD', -3, 0, 'integration_setup')", [session.cityId]);
+  await handle.pool.query("update inventory_balances set qty = 0 where city_id = $1 and good_id = 'GOOD_BREAD'", [session.cityId]);
+  await handle.pool.query(`update order_instances set requirements = '[{"goodId":"GOOD_BREAD","qty":3}]'::jsonb where city_id = $1 and status = 'OPEN'`, [session.cityId]);
+  expect((await acknowledge(session)).statusCode).toBe(200);
+  const recovery = await handle.pool.query<{ template_id: string; requirements: unknown; reward_coins: number; reward_xp: number }>("select template_id, requirements, reward_coins, reward_xp from order_instances where city_id = $1 and slot = 0 and status = 'OPEN'", [session.cityId]);
+  expect(recovery.rows[0]).toMatchObject({ template_id: "ORD-RECOVERY", requirements: [{ goodId: "GOOD_WHEAT", qty: 3 }], reward_coins: 60, reward_xp: 5 });
+  await assertLedgerReconciled(session.cityId);
+  await assertLedgerReconciled(readString(host.rows[0]?.id));
+});
+
 function advance(milliseconds: number): void {
   now = new Date(now.getTime() + milliseconds);
 }
@@ -640,3 +785,95 @@ function readString(value: unknown): string {
   }
   return value;
 }
+
+test("franchise guards ownership, plots, stock, and sequential separate supplies", async () => {
+  const owner = await guest();
+  const other = await guest();
+  const hosts = (await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: owner.authorization } })).json() as { hosts: { cityId: string; plots: { plotId: string }[] }[] };
+  const firstHost = hosts.hosts.find((host) => host.plots.length > 0);
+  if (firstHost === undefined) throw new Error("host missing");
+  const nextHost = hosts.hosts.find((host) => host.cityId !== firstHost.cityId && host.plots.length > 0);
+  if (nextHost === undefined) throw new Error("second host missing");
+  const post = (who: typeof owner, path: string, body: object) => app.inject({ method: "POST", url: path, headers: { authorization: who.authorization, "idempotency-key": randomUUID() }, payload: body });
+  const request = (who: typeof owner, host: typeof firstHost) => post(who, "/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[0]?.plotId, businessDefinitionId: "B-004" });
+  const created = await request(owner, firstHost);
+  expect(created.statusCode, created.body).toBe(200);
+  const id = readString(asRecord(asRecord(created.json()).result).franchiseId);
+  testFranchises.push(id);
+  const duplicate = await request(owner, nextHost);
+  expect(duplicate.statusCode).toBe(422);
+  expect(asRecord(duplicate.json()).error).toMatchObject({ message: "Brand already has an active branch" });
+  const occupied = await request(other, firstHost);
+  expect(occupied.statusCode).toBe(422);
+  expect(asRecord(occupied.json()).error).toMatchObject({ message: "Plot is occupied" });
+  await handle.pool.query("update inventory_balances set qty = 9 where city_id = $1 and good_id = 'GOOD_BREAD'", [owner.cityId]);
+  const supply = `/v1/franchises/${id}/supply`;
+  const collect = `/v1/franchises/${id}/collect`;
+  expect((await post(other, supply, { cycles: 1 })).statusCode).toBe(404);
+  expect((await post(other, collect, {})).statusCode).toBe(404);
+  expect((await post(owner, supply, { cycles: 1 })).statusCode).toBe(200);
+  advance(60_000);
+  expect((await post(owner, supply, { cycles: 1 })).statusCode).toBe(200);
+  advance(2_640_000);
+  expect(asRecord(asRecord((await post(owner, collect, {})).json()).result).total).toBe(110);
+  expect(asRecord(asRecord((await post(owner, collect, {})).json()).result).total).toBe(0);
+  const stock = await handle.pool.query<{ stock_cycles: number }>("select stock_cycles from franchises where id = $1", [id]);
+  expect(stock.rows[0]?.stock_cycles).toBe(1);
+  advance(2_700_000);
+  expect(asRecord(asRecord((await post(owner, collect, {})).json()).result).total).toBe(110);
+  expect((await post(owner, supply, { cycles: 1 })).statusCode).toBe(200);
+});
+
+test("two franchise cycles consume six bread", async () => {
+  const owner = await guest();
+  const hosts = (await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: owner.authorization } })).json() as { hosts: { cityId: string; plots: { plotId: string }[] }[] };
+  const host = hosts.hosts.find((item) => item.plots.length > 0);
+  if (host === undefined) throw new Error("host missing");
+  const post = (path: string, body: object) => app.inject({ method: "POST", url: path, headers: { authorization: owner.authorization, "idempotency-key": randomUUID() }, payload: body });
+  const created = await post("/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[0]?.plotId, businessDefinitionId: "B-004" });
+  expect(created.statusCode).toBe(200);
+  const id = readString(asRecord(asRecord(created.json()).result).franchiseId);
+  testFranchises.push(id);
+  await handle.pool.query("update inventory_balances set qty = 9 where city_id = $1 and good_id = 'GOOD_BREAD'", [owner.cityId]);
+  expect((await post(`/v1/franchises/${id}/supply`, { cycles: 2 })).statusCode).toBe(200);
+  const balance = await handle.pool.query<{ qty: number }>("select qty from inventory_balances where city_id = $1 and good_id = 'GOOD_BREAD'", [owner.cityId]);
+  expect(balance.rows[0]?.qty).toBe(3);
+});
+
+test("low coins with a solvable order do not create a recovery card", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set coins = 100 where id = $1", [session.cityId]);
+  await handle.pool.query("update order_instances set requirements = '[{\"goodId\":\"GOOD_BREAD\",\"qty\":3}]'::jsonb where city_id = $1 and status = 'OPEN'", [session.cityId]);
+  expect((await acknowledge(session)).statusCode).toBe(200);
+  const cards = await handle.pool.query<{ template_id: string }>("select template_id from order_instances where city_id = $1 and status = 'OPEN'", [session.cityId]);
+  expect(cards.rows.some((card) => card.template_id === "ORD-RECOVERY")).toBe(false);
+});
+
+test("simultaneous collections preserve both payments to a shared host", async () => {
+  const owners = [await guest(), await guest()];
+  const hosts = (await app.inject({ method: "GET", url: "/v1/franchises/hosts", headers: { authorization: owners[0]?.authorization } })).json() as { hosts: { cityId: string; plots: { plotId: string }[] }[] };
+  const host = hosts.hosts.find((item) => item.plots.length >= 2);
+  if (host === undefined) throw new Error("host with two plots missing");
+  const post = (owner: typeof owners[number], path: string, body: object) => app.inject({ method: "POST", url: path, headers: { authorization: owner.authorization, "idempotency-key": randomUUID() }, payload: body });
+  const ids: string[] = [];
+  for (const [index, owner] of owners.entries()) {
+    const response = await post(owner, "/v1/franchises/request", { hostCityId: host.cityId, plotId: host.plots[index]?.plotId, businessDefinitionId: "B-004" });
+    expect(response.statusCode, response.body).toBe(200);
+    const id = readString(asRecord(asRecord(response.json()).result).franchiseId);
+    ids.push(id); testFranchises.push(id);
+    expect((await post(owner, `/v1/franchises/${id}/supply`, { cycles: 1 })).statusCode).toBe(200);
+  }
+  advance(2_700_000);
+  const before = (await cityRow(host.cityId)).coins;
+  await handle.pool.query(`create or replace function qa_delay_host_update() returns trigger language plpgsql as $$ begin if NEW.coins > OLD.coins and OLD.is_npc then perform pg_sleep(0.3); end if; return NEW; end $$`);
+  await handle.pool.query("create trigger qa_delay_host_update before update on cities for each row execute function qa_delay_host_update()");
+  try {
+    const results = await Promise.all(owners.map((owner, index) => post(owner, `/v1/franchises/${ids[index]}/collect`, {})));
+    expect(results.map((result) => result.statusCode)).toEqual([200, 200]);
+    expect((await cityRow(host.cityId)).coins).toBe(before + 88);
+    await assertLedgerReconciled(host.cityId);
+  } finally {
+    await handle.pool.query("drop trigger qa_delay_host_update on cities");
+    await handle.pool.query("drop function qa_delay_host_update()");
+  }
+});

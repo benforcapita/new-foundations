@@ -279,6 +279,7 @@ export const franchiseShipments = pgTable(
       .notNull()
       .references(() => franchises.id, { onDelete: "cascade" }),
     commandId: uuid("command_id").notNull(),
+    cycleIndex: integer("cycle_index").notNull().default(0),
     goods: jsonb("goods").$type<unknown[]>().notNull().default([]),
     ownerAmount: integer("owner_amount").notNull(),
     hostAmount: integer("host_amount").notNull(),
@@ -289,9 +290,7 @@ export const franchiseShipments = pgTable(
     earnCompletesAt: timestamp("earn_completes_at", { withTimezone: true }),
     settledAt: timestamp("settled_at", { withTimezone: true }),
   },
-  (table) => [
-    uniqueIndex("franchise_shipments_command_unique").on(table.franchiseId, table.commandId),
-  ],
+  (table) => [uniqueIndex("franchise_shipments_command_unique").on(table.franchiseId, table.commandId, table.cycleIndex)],
 );
 
 export const quests = pgTable(

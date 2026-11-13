@@ -35,6 +35,7 @@ test("migrations apply once and stay idempotent on PostgreSQL 16", async () => {
     "0002_inventory_ledger_append_only.sql",
     "0003_order_contract.sql",
     "0004_lld_section4.sql",
+    "0005_franchise_queued_cycles.sql",
   ]);
 
   const appliedAgain = await migrate(handle.pool);
@@ -175,7 +176,7 @@ test("LLD section 4 columns, keys, and checks are installed", async () => {
   const keyText = keys.rows.map((row) => `${row.table_name} ${row.definition}`).join("\n");
   expect(keyText).toContain("quests PRIMARY KEY (city_id, quest_id, period_key)");
   expect(keyText).toContain("npc_visits PRIMARY KEY (city_id, npc_city_id)");
-  expect(keyText).toMatch(/franchise_shipments UNIQUE \(franchise_id, command_id\)/);
+  expect(keyText).toMatch(/franchise_shipments UNIQUE \(franchise_id, command_id, cycle_index\)/);
 });
 
 test("partial unique indexes and the franchise split check are installed", async () => {

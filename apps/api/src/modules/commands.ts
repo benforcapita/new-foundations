@@ -85,7 +85,7 @@ export async function cityCommand(
     cityId: actor.cityId,
     cityIds: [actor.cityId],
     commandId: prepared.commandId,
-    requestHash: prepared.requestHash,
+    requestHash: sha256Hex(`${name}:${prepared.requestHash}`),
     fromVersion: prepared.fromVersion,
     now,
     cityLevel: actor.level,
@@ -98,7 +98,7 @@ export async function cityCommand(
   void reply.status(outcome.statusCode).send(outcome.body);
 }
 
-function prepareCommand(
+export function prepareCommand(
   limiter: RateLimiter,
   actor: Actor,
   request: FastifyRequest,

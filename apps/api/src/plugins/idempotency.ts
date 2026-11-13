@@ -1,3 +1,5 @@
+import { ensureRecoveryOrder } from "../modules/orderRecovery";
+import { progressQuests } from "../modules/questProgress";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { CONTENT_VERSION, levelForXp } from "@nf/shared";
 import { commandSuccessSchema, type CommandSuccess, type Delta } from "@nf/shared/schemas";
@@ -178,6 +180,7 @@ export async function runCommand(
       }
       throw error;
     }
+    if (effects.telemetry !== undefined) await progressQuests(ctx, input.cityId, effects.telemetry);
     const cityBalances = {
       coins: Number(city.coins),
       xp: Number(city.xp),
@@ -217,6 +220,8 @@ export async function runCommand(
         populationCap,
       })
       .where(eq(cities.id, input.cityId));
+
+    await ensureRecoveryOrder(ctx, input.cityId);
 
     if (effects.telemetry !== undefined) {
       await tx.insert(telemetryEvents).values({
