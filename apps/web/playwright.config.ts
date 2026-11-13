@@ -7,7 +7,7 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
   forbidOnly: process.env.CI !== undefined,
-  retries: process.env.CI === undefined ? 0 : 1,
+  retries: 0,
   use: {
     baseURL,
     trace: "on-first-retry",
