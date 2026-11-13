@@ -20,6 +20,72 @@ async function openCity(page: Page): Promise<void> {
   );
 }
 
+type Rgb = { readonly r: number; readonly g: number; readonly b: number };
+
+declare global {
+  interface Window {
+    __nfPaintLatency?: Promise<number>;
+  }
+}
+
+async function labelPixels(page: Page, worldX: number, worldY: number): Promise<number> {
+  await page.evaluate(
+    ({ x, y }) => {
+      const debug = window.__nfDebug;
+      if (debug === undefined) {
+        throw new Error("missing __nfDebug");
+      }
+      debug.focusWorld(x, y, 2);
+    },
+    { x: worldX, y: worldY },
+  );
+  await nextFrame(page);
+  return page.evaluate(
+    ({ x, y }) => {
+      const debug = window.__nfDebug;
+      const canvas = document.querySelector("canvas");
+      if (debug === undefined || !(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("canvas missing");
+      }
+      const point = debug.worldClient(x, y);
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = rect.width === 0 ? 1 : canvas.width / rect.width;
+      const scaleY = rect.height === 0 ? 1 : canvas.height / rect.height;
+      const centerX = Math.round((point.x - rect.left) * scaleX);
+      const centerY = Math.round((point.y - rect.top) * scaleY);
+      const context = canvas.getContext("2d");
+      if (context === null) {
+        throw new Error("canvas has no 2d context");
+      }
+      const { data } = context.getImageData(centerX - 6, centerY - 6, 13, 13);
+      let matches = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        const red = data[index] ?? 0;
+        const green = data[index + 1] ?? 0;
+        const blue = data[index + 2] ?? 0;
+        if (Math.abs(red - 244) < 12 && Math.abs(green - 241) < 12 && Math.abs(blue - 234) < 12) {
+          matches += 1;
+        }
+      }
+      return matches;
+    },
+    { x: worldX, y: worldY },
+  );
+}
+
+async function nextFrame(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            resolve(undefined);
+          });
+        });
+      }),
+  );
+}
+
 async function aim(page: Page, cell: { readonly x: number; readonly y: number }): Promise<void> {
   await page.evaluate(({ x, y }) => {
     const debug = window.__nfDebug;
@@ -82,26 +148,135 @@ test("renders the 24x24 starter map with depth-sorted buildings", async ({ page 
   const shot = await page.getByTestId("game-canvas").locator("canvas").screenshot();
   await test.info().attach("iso-occlusion", { body: shot, contentType: "image/png" });
   expect(shot.byteLength).toBeGreaterThan(5_000);
+
+  // Town-hall flag strip at world (1526, 204) covers the cottage wall.
+  // Slate is the hall; tan is the cottage. Reversing depth hides the slate.
+  const townHall: Rgb = { r: 103, g: 119, b: 131 };
+  const cottage: Rgb = { r: 244, g: 217, b: 168 };
+  const overlap = { x: 1526, y: 204 };
+  await page.evaluate(({ x, y }) => {
+    const debug = window.__nfDebug;
+    if (debug === undefined) {
+      throw new Error("missing __nfDebug");
+    }
+    debug.focusWorld(x, y, 2);
+  }, overlap);
+  await nextFrame(page);
+  const frontPixels = await page.evaluate(
+    ({ x, y, front, back }) => {
+      const debug = window.__nfDebug;
+      const canvas = document.querySelector("canvas");
+      if (debug === undefined || !(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("canvas missing");
+      }
+      const point = debug.worldClient(x, y);
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = rect.width === 0 ? 1 : canvas.width / rect.width;
+      const scaleY = rect.height === 0 ? 1 : canvas.height / rect.height;
+      const centerX = Math.round((point.x - rect.left) * scaleX);
+      const centerY = Math.round((point.y - rect.top) * scaleY);
+      const context = canvas.getContext("2d");
+      if (context === null) {
+        throw new Error("canvas has no 2d context");
+      }
+      const { data } = context.getImageData(centerX - 4, centerY - 16, 9, 33);
+      let closerToFront = 0;
+      for (let index = 0; index < data.length; index += 4) {
+        const pixel = { r: data[index] ?? 0, g: data[index + 1] ?? 0, b: data[index + 2] ?? 0 };
+        const frontDistance =
+          Math.abs(pixel.r - front.r) + Math.abs(pixel.g - front.g) + Math.abs(pixel.b - front.b);
+        const backDistance = Math.abs(pixel.r - back.r) + Math.abs(pixel.g - back.g) + Math.abs(pixel.b - back.b);
+        if (frontDistance + 50 < backDistance) {
+          closerToFront += 1;
+        }
+      }
+      return closerToFront;
+    },
+    { x: overlap.x, y: overlap.y, front: townHall, back: cottage },
+  );
+  expect(frontPixels).toBeGreaterThanOrEqual(10);
 });
+
+async function pointerToPixelMs(page: Page, cell: { readonly x: number; readonly y: number }, world: { readonly x: number; readonly y: number }): Promise<number> {
+  await page.evaluate(({ x, y }) => {
+    const debug = window.__nfDebug;
+    if (debug === undefined) {
+      throw new Error("missing __nfDebug");
+    }
+    debug.focusCell(x, y);
+  }, cell);
+  await nextFrame(page);
+  const point = await page.evaluate(({ x, y }) => {
+    const debug = window.__nfDebug;
+    if (debug === undefined) {
+      throw new Error("missing __nfDebug");
+    }
+    return debug.cellClient(x, y);
+  }, cell);
+  await page.evaluate(({ x, y }) => {
+    const debug = window.__nfDebug;
+    const canvas = document.querySelector("canvas");
+    if (debug === undefined || !(canvas instanceof HTMLCanvasElement)) {
+      throw new Error("canvas missing");
+    }
+    const sample = debug.worldClient(x, y);
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width === 0 ? 1 : canvas.width / rect.width;
+    const scaleY = rect.height === 0 ? 1 : canvas.height / rect.height;
+    const centerX = Math.round((sample.x - rect.left) * scaleX);
+    const centerY = Math.round((sample.y - rect.top) * scaleY);
+    const context = canvas.getContext("2d");
+    if (context === null) {
+      throw new Error("canvas has no 2d context");
+    }
+    const painted = (): boolean => {
+      const data = context.getImageData(centerX - 2, centerY - 2, 5, 5).data;
+      for (let index = 0; index < data.length; index += 4) {
+        const red = data[index] ?? 255;
+        const green = data[index + 1] ?? 255;
+        const blue = data[index + 2] ?? 255;
+        if (red > 180 && green > 180 && blue < 90) {
+          return true;
+        }
+      }
+      return false;
+    };
+    window.__nfPaintLatency = new Promise((resolve) => {
+      const onMove = (): void => {
+        canvas.removeEventListener("pointermove", onMove, true);
+        const started = performance.now();
+        const tick = (): void => {
+          if (painted() || performance.now() - started > 400) {
+            resolve(Math.round(performance.now() - started));
+            return;
+          }
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      };
+      canvas.addEventListener("pointermove", onMove, true);
+    });
+  }, world);
+  await page.mouse.move(point.x, point.y);
+  return page.evaluate(() => window.__nfPaintLatency ?? Promise.resolve(500));
+}
 
 test("placement ghost tracks the pointer, explains blocks, and rotates the station", async ({ page }) => {
   await openCity(page);
   await page.getByTestId("place-cottage").click();
 
-  await aim(page, GHOST_VALID_CELL);
+  const validLatency = await pointerToPixelMs(page, GHOST_VALID_CELL, { x: 384, y: 720 });
+  expect(validLatency).toBeGreaterThanOrEqual(0);
+  expect(validLatency).toBeLessThanOrEqual(100);
   await expect(page.getByTestId("ghost-cell")).toHaveText(`${GHOST_VALID_CELL.x},${GHOST_VALID_CELL.y}`);
   await expect(page.getByTestId("ghost-tone")).toHaveText("valid");
   await expect(page.getByTestId("ghost-text")).toHaveText("Valid");
   await expect(page.getByTestId("ghost-icon")).toHaveText("ico_ui_check");
   await expect(page.getByTestId("ghost-road-hint")).toHaveText("yes");
-  const validLatency = Number(await page.getByTestId("ghost-latency").textContent());
-  expect(validLatency).toBeGreaterThanOrEqual(0);
-  expect(validLatency).toBeLessThanOrEqual(100);
 
   await aim(page, GHOST_HINT_CLEAR_CELL);
   await expect(page.getByTestId("ghost-tone")).toHaveText("valid");
   await expect(page.getByTestId("ghost-road-hint")).toHaveText("no");
-  expect(Number(await page.getByTestId("ghost-latency").textContent())).toBeLessThanOrEqual(100);
 
   await aim(page, GHOST_BLOCKED_CELL);
   await expect(page.getByTestId("ghost-tone")).toHaveText("blocked");
@@ -132,6 +307,18 @@ test("placement ghost tracks the pointer, explains blocks, and rotates the stati
 test("state overlays collapse to status dots below zoom 0.9", async ({ page }) => {
   await openCity(page);
   await expect(page.getByTestId("overlay-cottage-build")).toHaveText("Under Construction");
+  // Grocery label sits on its roof. The old frame-top placement was ~115px higher.
+  const labelAtRoof = await labelPixels(page, 1780, 516);
+  const labelAtFrameTop = await labelPixels(page, 1740, 408);
+  expect(labelAtRoof).toBeGreaterThanOrEqual(8);
+  expect(labelAtFrameTop).toBe(0);
+  await page.evaluate(() => {
+    const debug = window.__nfDebug;
+    if (debug === undefined) {
+      throw new Error("missing __nfDebug");
+    }
+    debug.focusWorld(1536, 624, 1);
+  });
   await expect(page.getByTestId("overlay-grocery")).toHaveText("Needs Supply");
   await expect(page.getByTestId("overlay-bakery")).toHaveText("3:00");
   await expect(page.getByTestId("overlay-cottage-ready")).toHaveText("Ready");

@@ -11,7 +11,7 @@ import {
 import Phaser from "phaser";
 import { bundledPngIds, resolveAssetUrl } from "./assetUrls";
 import { cropBobOffset } from "./bob";
-import { cameraAction, zoomFromPinch, zoomFromWheel } from "./camera";
+import { cameraAction, clampZoom, screenFromWorld, worldFromScreen, zoomFromPinch, zoomFromWheel } from "./camera";
 import type { NfDebug } from "./debug";
 import {
   demoBuildings,
@@ -28,6 +28,7 @@ import { MAP_ORIGIN_X, MAP_ORIGIN_Y, anchorScreen, cellCenter, diamondPoints, di
 import { overlayColor, overlayForState } from "./overlays";
 import { plotPresentation } from "./plots";
 import { IDLE_GHOST, usePlacementStore, useSceneStore, type OverlayReadout } from "./scene-store";
+import { firstOpaqueRow, visibleArtTop } from "./spriteArt";
 
 type Badge = {
   readonly id: string;
@@ -127,6 +128,25 @@ function paintDiamond(
   graphics.strokePath();
 }
 
+function opaqueRowOf(texture: Phaser.Textures.Texture): number {
+  const source = texture.getSourceImage() as CanvasImageSource & { width?: number; height?: number };
+  const width = source.width ?? 0;
+  const height = source.height ?? 0;
+  if (width === 0 || height === 0) {
+    return 0;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (context === null) {
+    return 0;
+  }
+  context.drawImage(source, 0, 0);
+  const { data } = context.getImageData(0, 0, width, height);
+  return firstOpaqueRow(width, height, (x, y) => data[(y * width + x) * 4 + 3] ?? 0);
+}
+
 export class IsoScene extends Phaser.Scene {
   private reducedMotion = false;
   private disposed = false;
@@ -144,6 +164,8 @@ export class IsoScene extends Phaser.Scene {
   private ghostLabel: Phaser.GameObjects.Text | null = null;
   private ghostHint: Phaser.GameObjects.Graphics | null = null;
   private ghostFoot: Phaser.GameObjects.Graphics | null = null;
+  private ghostStamp: number | null = null;
+  private readonly opaqueRows = new Map<string, number>();
 
   constructor() {
     super("iso");
@@ -179,8 +201,10 @@ export class IsoScene extends Phaser.Scene {
     camera.centerOn(framed.x, framed.y);
     camera.roundPixels = true;
     this.bindInput();
+    this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPaint);
     this.unsubscribe = usePlacementStore.subscribe(() => {
-      this.refreshGhost(performance.now());
+      this.ghostStamp = performance.now();
+      this.refreshGhost();
     });
     this.publishWorld();
     this.installDebug();
@@ -287,7 +311,7 @@ export class IsoScene extends Phaser.Scene {
       if (overlay === null) {
         continue;
       }
-      const top = image.y - image.displayHeight * image.originY - 16;
+      const artTop = this.artTop(image);
       const color = overlayColor(overlay.marker);
       let detail: Phaser.GameObjects.Graphics | null = null;
       if (overlay.marker === "construction") {
@@ -298,12 +322,13 @@ export class IsoScene extends Phaser.Scene {
       const icon =
         overlay.icon === null
           ? null
-          : this.add.image(image.x - 16, top, overlay.icon).setDisplaySize(FULL_ICON, FULL_ICON).setOrigin(0.5, 0.5).setDepth(overlayDepth(depth));
-      const label =
-        overlay.marker === "timer"
-          ? this.statusText(image.x, top, overlay.text, overlayDepth(depth))
-          : this.statusText(image.x + 8, top - 8, overlay.text, overlayDepth(depth));
-      const dot = this.statusDot(image.x, top, color, overlayDepth(depth));
+          : this.add
+              .image(image.x - 20, artTop - FULL_ICON / 2 - 2, overlay.icon)
+              .setDisplaySize(FULL_ICON, FULL_ICON)
+              .setOrigin(0.5, 0.5)
+              .setDepth(overlayDepth(depth));
+      const label = this.statusText(image.x, artTop - 2, overlay.text, overlayDepth(depth));
+      const dot = this.statusDot(image.x, artTop + 10, color, overlayDepth(depth));
       this.badges.push({ id: building.instanceId, labelText: overlay.text, icon, label, dot, detail });
     }
   }
@@ -413,7 +438,7 @@ export class IsoScene extends Phaser.Scene {
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
-    const started = performance.now();
+    this.ghostStamp = performance.now();
     const previous = this.pointers.get(event.pointerId);
     this.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (this.pointers.size >= 2) {
@@ -426,7 +451,17 @@ export class IsoScene extends Phaser.Scene {
       this.publishCamera();
     }
     this.pointerWorld = this.worldFromClient(event.clientX, event.clientY);
-    this.refreshGhost(started);
+    this.refreshGhost();
+  };
+
+  private readonly onPaint = (): void => {
+    if (this.ghostStamp === null) {
+      return;
+    }
+    const latencyMs = Math.max(0, Math.round(performance.now() - this.ghostStamp));
+    this.ghostStamp = null;
+    const ghost = useSceneStore.getState().ghost;
+    useSceneStore.getState().publish({ ghost: { ...ghost, latencyMs } });
   };
 
   private applyPinch(): void {
@@ -451,27 +486,63 @@ export class IsoScene extends Phaser.Scene {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width === 0 ? 1 : rect.width / canvas.width;
     const scaleY = canvas.height === 0 ? 1 : rect.height / canvas.height;
-    const screenX = (clientX - rect.left) / scaleX - camera.x;
-    const screenY = (clientY - rect.top) / scaleY - camera.y;
-    return {
-      x: screenX / camera.zoom + camera.scrollX,
-      y: screenY / camera.zoom + camera.scrollY,
-    };
+    const canvasX = (clientX - rect.left) / scaleX;
+    const canvasY = (clientY - rect.top) / scaleY;
+    return worldFromScreen(
+      canvasX,
+      canvasY,
+      camera.scrollX,
+      camera.scrollY,
+      camera.zoom,
+      camera.width,
+      camera.height,
+      camera.x,
+      camera.y,
+    );
   }
 
   private cellClient(gridX: number, gridY: number): { x: number; y: number } {
     const world = cellCenter(gridX, gridY);
+    return this.worldClient(world.x, world.y);
+  }
+
+  private worldClient(worldX: number, worldY: number): { x: number; y: number } {
     const camera = this.cameras.main;
     const canvas = this.game.canvas;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width === 0 ? 1 : rect.width / canvas.width;
     const scaleY = canvas.height === 0 ? 1 : rect.height / canvas.height;
-    const screenX = (world.x - camera.scrollX) * camera.zoom + camera.x;
-    const screenY = (world.y - camera.scrollY) * camera.zoom + camera.y;
+    const screen = screenFromWorld(
+      worldX,
+      worldY,
+      camera.scrollX,
+      camera.scrollY,
+      camera.zoom,
+      camera.width,
+      camera.height,
+      camera.x,
+      camera.y,
+    );
+    const screenX = screen.x;
+    const screenY = screen.y;
     return { x: rect.left + screenX * scaleX, y: rect.top + screenY * scaleY };
   }
 
-  private refreshGhost(started: number): void {
+  private artTop(image: Phaser.GameObjects.Image): number {
+    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, this.opaqueRow(image.texture.key));
+  }
+
+  private opaqueRow(key: string): number {
+    const cached = this.opaqueRows.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const row = opaqueRowOf(this.textures.get(key));
+    this.opaqueRows.set(key, row);
+    return row;
+  }
+
+  private refreshGhost(): void {
     const image = this.ghostImage;
     const icon = this.ghostIcon;
     const label = this.ghostLabel;
@@ -514,11 +585,12 @@ export class IsoScene extends Phaser.Scene {
     image.setDepth(depth);
     image.setVisible(true);
     icon.setTexture(feedback.icon);
-    icon.setPosition(anchor.x - 16, anchor.y - size.height * meta.pivotY - 20);
+    const artTop = visibleArtTop(anchor.y, size.height, meta.pivotY, image.height, this.opaqueRow(assetId));
+    icon.setPosition(anchor.x - 18, artTop - 16);
     icon.setDepth(depth);
     icon.setVisible(true);
     label.setText(feedback.text);
-    label.setPosition(anchor.x + 4, anchor.y - size.height * meta.pivotY - 8);
+    label.setPosition(anchor.x + 2, artTop - 2);
     label.setDepth(depth);
     label.setVisible(true);
     foot.clear();
@@ -538,7 +610,6 @@ export class IsoScene extends Phaser.Scene {
         roadHintDrawn = strokeDashed(hint, from.x, from.y, to.x, to.y, ROAD_HINT_COLOR);
       }
     }
-    const latencyMs = Math.max(0, Math.round(performance.now() - started));
     useSceneStore.getState().publish({
       ghost: {
         active: true,
@@ -551,7 +622,7 @@ export class IsoScene extends Phaser.Scene {
         text: feedback.text,
         icon: feedback.icon,
         roadHint: roadHintDrawn,
-        latencyMs,
+        latencyMs: previousLatency,
       },
     });
   }
@@ -619,9 +690,15 @@ export class IsoScene extends Phaser.Scene {
     const debug: NfDebug = {
       ready: true,
       cellClient: (x, y) => this.cellClient(x, y),
+      worldClient: (x, y) => this.worldClient(x, y),
       focusCell: (x, y) => {
         const world = cellCenter(x, y);
         this.cameras.main.centerOn(world.x, world.y);
+        this.publishCamera();
+      },
+      focusWorld: (x, y, zoom) => {
+        this.cameras.main.setZoom(clampZoom(zoom));
+        this.cameras.main.centerOn(x, y);
         this.publishCamera();
       },
       latencyMs: () => useSceneStore.getState().ghost.latencyMs,
@@ -652,6 +729,7 @@ export class IsoScene extends Phaser.Scene {
       host.removeEventListener("wheel", this.onWheel);
     }
     window.removeEventListener("keydown", this.onKeyDown);
+    this.game.events.off(Phaser.Core.Events.POST_RENDER, this.onPaint);
     window.matchMedia("(prefers-reduced-motion: reduce)").removeEventListener("change", this.onMotion);
     if (window.__nfDebug !== undefined) {
       delete window.__nfDebug;

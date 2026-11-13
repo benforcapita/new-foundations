@@ -7,6 +7,43 @@ export type CameraAction =
   | { readonly type: "cancel" }
   | { readonly type: "pan"; readonly x: number; readonly y: number };
 
+/** Canvas pixel of a world point. Zoom is about the view center, matching Phaser's camera matrix. */
+export function screenFromWorld(
+  worldX: number,
+  worldY: number,
+  scrollX: number,
+  scrollY: number,
+  zoom: number,
+  viewWidth: number,
+  viewHeight: number,
+  viewX = 0,
+  viewY = 0,
+): { readonly x: number; readonly y: number } {
+  const scale = zoom === 0 ? 1 : zoom;
+  return {
+    x: (worldX - scrollX - viewWidth / 2) * scale + viewWidth / 2 + viewX,
+    y: (worldY - scrollY - viewHeight / 2) * scale + viewHeight / 2 + viewY,
+  };
+}
+
+export function worldFromScreen(
+  screenX: number,
+  screenY: number,
+  scrollX: number,
+  scrollY: number,
+  zoom: number,
+  viewWidth: number,
+  viewHeight: number,
+  viewX = 0,
+  viewY = 0,
+): { readonly x: number; readonly y: number } {
+  const scale = zoom === 0 ? 1 : zoom;
+  return {
+    x: (screenX - viewX - viewWidth / 2) / scale + scrollX + viewWidth / 2,
+    y: (screenY - viewY - viewHeight / 2) / scale + scrollY + viewHeight / 2,
+  };
+}
+
 export function clampZoom(zoom: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
