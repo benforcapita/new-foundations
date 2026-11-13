@@ -1,5 +1,6 @@
 import { APP_NAME } from "@nf/shared";
 import { useEffect } from "react";
+import { Feedback } from "./components/Feedback";
 import { GameCanvas } from "./GameCanvas";
 import { usePlacementStore, useSceneStore } from "./game/scene-store";
 import { useShellStore } from "./shell-store";
@@ -53,6 +54,7 @@ export function App() {
         ) : null}
       </div>
       <GameCanvas />
+      <Feedback />
       <section className="readout" data-testid="scene-readout" aria-live="polite">
         <span data-testid="scene-ready">{scene.ready ? "yes" : "no"}</span>
         <span data-testid="map-size">{scene.mapSize}</span>

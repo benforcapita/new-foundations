@@ -80,3 +80,29 @@ p {
   list-style: none;
   white-space: nowrap;
 }
+
+button, input, select, a[href], [role="button"] { min-width: 44px; min-height: 44px; }
+.app { height: auto; min-height: 100%; }
+.feedback { position: relative; background: #f8eedb; color: #253d4a; padding: 12px; display: grid; gap: 10px; }
+.feedback-hud, .npc-list, .feedback-controls, .franchise-demo { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.feedback-controls button { padding: 4px 12px; }
+.npc-badge { display: grid; justify-items: center; width: 110px; text-align: center; font-size: 14px; }
+.npc-pill { background: #253d4a; color: #f8eedb; border-radius: 1em; padding: 2px 8px; }
+.bond { width: 100px; border-top: 3px dashed #253d4a; }
+.bond.animate { animation: bond 600ms ease-out; }
+@keyframes bond { from { width: 0; } to { width: 100px; } }
+.fx-stage { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.fx-stage img { width: 24px; height: 24px; }
+.coin-flight, .xp-flight { position: absolute; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; animation: flight 400ms ease-in forwards; pointer-events: none; }
+@keyframes flight { 50% { transform: translate(calc(var(--dx) * 0.45 - 40px), calc(var(--dy) * 0.45 - 50px)); } to { transform: translate(var(--dx), var(--dy)); } }
+.placement-pop, .sold-out { position: absolute; left: 50%; top: 30%; background: #253d4a; color: #f8eedb; padding: 5px; animation: pop 180ms ease-out; }
+.sold-out { animation: pulse 600ms ease-out; } .sold-out img { vertical-align: middle; }
+@keyframes pop { 0% { transform: scale(.85); } 70% { transform: scale(1.05); } 100% { transform: scale(1); } }
+@keyframes pulse { 50% { transform: scale(1.1); } }
+.smoke { position: absolute; left: 50%; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: #777; animation: smoke 600ms ease-out forwards; }
+.smoke-1 { left: 51%; } .smoke-2 { left: 52%; } .smoke-3 { left: 53%; } .smoke-4 { left: 54%; } .smoke-5 { left: 55%; }
+@keyframes smoke { to { transform: translate(35px, -70px) scale(2); opacity: 0; } }
+.fx-toast { min-height: 1.5em; }
+.levelup-layer { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 10; }
+.levelup-card { pointer-events: auto; padding: 32px; background: #253d4a; color: #f8eedb; font-size: 2rem; border: 3px solid #f8eedb; }
+.levelup-card span { display: block; font-size: 1rem; }
