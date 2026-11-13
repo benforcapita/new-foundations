@@ -37,6 +37,7 @@ export const useCityStore = create<State>((set, get) => ({
         if (!command) break;
         try {
           await api.command(session.token, session.cityId, command.name, command.body, command.key);
+          if (command.name === "reroll-order") localStorage.setItem(`nf_reroll:${session.cityId}`, String(Date.now() + 900_000));
           const snapshot = await api.snapshot(session.token, session.cityId);
           const queue = get().queue.filter((item) => item.key !== command.key);
           persist(session.cityId, queue); set({ snapshot, queue });
