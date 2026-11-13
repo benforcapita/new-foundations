@@ -9,8 +9,10 @@ import { registerHealth } from "./modules/health";
 import { registerAuth } from "./modules/auth";
 import { registerCatalog } from "./modules/catalog";
 import { loadCurrentCity } from "./modules/city";
-import { acknowledgeCommand } from "./modules/commands";
+import { acknowledgeCommand, cityCommand } from "./modules/commands";
+import { loadCitySnapshot, readSinceVersion } from "./modules/snapshot";
 import { authenticate } from "./plugins/auth";
+import { ApiError } from "./errors";
 
 export type AppOptions = {
   readonly logger: boolean;
@@ -50,7 +52,39 @@ export function buildApp(options: AppOptions): FastifyInstance {
       const actor = await authenticate(database, request.headers.authorization);
       await acknowledgeCommand(database, limiter, actor, request, reply, clock());
     });
+    app.get("/v1/cities/:cityId/snapshot", async (request) => {
+      const actor = await authenticate(database, request.headers.authorization);
+      const cityId = routeParam(request.params, "cityId");
+      if (cityId !== actor.cityId) {
+        throw new ApiError(404, "NOT_FOUND", "City not found");
+      }
+      return loadCitySnapshot(database, cityId, actor.userId, readSinceVersion(cityId, request.query), clock());
+    });
+    app.post("/v1/cities/:cityId/commands/:commandName", async (request, reply) => {
+      const actor = await authenticate(database, request.headers.authorization);
+      await cityCommand(
+        database,
+        limiter,
+        actor,
+        routeParam(request.params, "cityId"),
+        routeParam(request.params, "commandName"),
+        request,
+        reply,
+        clock(),
+      );
+    });
   }
 
   return app;
+}
+
+function routeParam(params: unknown, name: string): string {
+  if (typeof params !== "object" || params === null) {
+    throw new ApiError(400, "VALIDATION", "Route parameter is missing");
+  }
+  const value = Object.entries(params).find(([key]) => key === name)?.[1];
+  if (typeof value === "string" && value.length > 0) {
+    return value;
+  }
+  throw new ApiError(400, "VALIDATION", "Route parameter is missing");
 }

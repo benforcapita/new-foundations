@@ -1,4 +1,4 @@
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, eq, isNull, ne } from "drizzle-orm";
 import { CONTENT_VERSION } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import type { Database } from "../db/client";
@@ -24,7 +24,11 @@ export async function loadCurrentCity(db: Database, cityId: string, now: Date): 
   }
   const [cells, buildings, inventory, jobs, orders, trains, ownedFranchises, hostedFranchises, questRows] = await Promise.all([
     db.select().from(cityCells).where(eq(cityCells.cityId, cityId)).orderBy(asc(cityCells.y), asc(cityCells.x)),
-    db.select().from(buildingInstances).where(eq(buildingInstances.cityId, cityId)).orderBy(asc(buildingInstances.id)),
+    db
+      .select()
+      .from(buildingInstances)
+      .where(and(eq(buildingInstances.cityId, cityId), isNull(buildingInstances.removedAt)))
+      .orderBy(asc(buildingInstances.id)),
     db.select().from(inventoryBalances).where(eq(inventoryBalances.cityId, cityId)).orderBy(asc(inventoryBalances.goodId)),
     db.select().from(productionJobs).where(eq(productionJobs.cityId, cityId)).orderBy(asc(productionJobs.slot)),
     db.select().from(orderInstances).where(eq(orderInstances.cityId, cityId)).orderBy(asc(orderInstances.slot)),

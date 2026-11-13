@@ -1,26 +1,15 @@
-import { and, eq, inArray, isNull, lte, sql } from "drizzle-orm";
-import { CONTENT_VERSION } from "@nf/shared";
-import { commandSuccessSchema, type CommandSuccess } from "@nf/shared/schemas";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { CONTENT_VERSION, levelForXp } from "@nf/shared";
+import { commandSuccessSchema, type CommandSuccess, type Delta } from "@nf/shared/schemas";
 import type { Database } from "../db/client";
-import {
-  cities,
-  commandDedup,
-  inventoryBalances,
-  inventoryLedger,
-  productionJobs,
-  telemetryEvents,
-} from "../db/schema";
+import { cities, commandDedup, inventoryBalances, inventoryLedger, telemetryEvents } from "../db/schema";
 import { ApiError } from "../errors";
 import { orderedCityIds } from "../commands/orderedCityIds";
-import { presentCityHeader, presentDelta, presentInventory } from "../modules/present";
+import type { LedgerWrite } from "../economy/ledger";
+import { readChangedDelta, resolveStoredTimers } from "../modules/cityState";
+import { presentInventory } from "../modules/present";
 
-export type LedgerWrite = {
-  readonly resource: string;
-  readonly delta: number;
-  readonly source: string;
-  readonly refType?: string;
-  readonly refId?: string;
-};
+export type { LedgerWrite };
 
 type CityResource = "COINS" | "XP" | "GEMS" | "CIVIC_STARS";
 
@@ -40,6 +29,18 @@ export type CommandEffects = {
   readonly ledger: readonly LedgerWrite[];
   readonly telemetry?: { readonly name: string; readonly payload: Record<string, unknown> };
   readonly result?: unknown;
+  readonly cityPatch?: { readonly population: number; readonly populationCap: number };
+};
+
+export type CommandTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+export type CommandContext = {
+  readonly tx: CommandTx;
+  readonly now: Date;
+  readonly commandId: string;
+  readonly versionAfter: number;
+  readonly cityVersion: number;
+  readonly failureDelta: Delta;
 };
 
 export type CommandOutcome = {
@@ -89,7 +90,7 @@ export async function runCommand(
     readonly fromVersion: number | null;
     readonly now: Date;
     readonly cityLevel: number;
-    readonly apply: () => Promise<CommandEffects>;
+    readonly apply: (ctx: CommandContext) => Promise<CommandEffects>;
   },
 ): Promise<CommandOutcome> {
   return db.transaction(async (tx) => {
@@ -129,26 +130,54 @@ export async function runCommand(
     if (!locked.includes(input.cityId)) {
       throw new ApiError(404, "NOT_FOUND", "City not found");
     }
-
-    await tx
-      .update(productionJobs)
-      .set({ movedToOutputAt: input.now })
-      .where(
-        and(
-          inArray(productionJobs.cityId, locked),
-          isNull(productionJobs.movedToOutputAt),
-          isNull(productionJobs.cancelledAt),
-          lte(productionJobs.completesAt, input.now),
-        ),
-      );
+    const owned = await tx.execute<{ id: string }>(sql`
+      select id from cities
+      where id = ${input.cityId} and owner_id = ${input.actorId}
+      for update
+    `);
+    if (owned.rows.length !== 1) {
+      throw new ApiError(404, "NOT_FOUND", "City not found");
+    }
 
     const [city] = await tx.select().from(cities).where(eq(cities.id, input.cityId)).limit(1);
     if (city === undefined) {
       throw new ApiError(404, "NOT_FOUND", "City not found");
     }
+    const preVersion = Number(city.version);
+    const versionAfter = preVersion + 1;
+    const deltaFrom = input.fromVersion !== null && input.fromVersion < preVersion ? input.fromVersion : preVersion;
+    const balancesNow = await tx.select().from(inventoryBalances).where(eq(inventoryBalances.cityId, input.cityId));
+    const failureDelta = await readChangedDelta(
+      tx,
+      city,
+      deltaFrom,
+      preVersion,
+      presentInventory(balancesNow),
+      deltaFrom < preVersion,
+    );
+    const ctx: CommandContext = {
+      tx,
+      now: input.now,
+      commandId: input.commandId,
+      versionAfter,
+      cityVersion: preVersion,
+      failureDelta,
+    };
 
-    const effects = await input.apply();
-    const versionAfter = Number(city.version) + 1;
+    let effects: CommandEffects;
+    try {
+      await resolveStoredTimers(tx, input.cityId, input.now, versionAfter);
+      effects = await input.apply(ctx);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        throw new ApiError(error.statusCode, error.code, error.message, {
+          ...(error.details === undefined ? {} : { details: error.details }),
+          cityVersion: error.cityVersion ?? preVersion,
+          delta: error.delta ?? failureDelta,
+        });
+      }
+      throw error;
+    }
     const cityBalances = {
       coins: Number(city.coins),
       xp: Number(city.xp),
@@ -171,6 +200,9 @@ export async function runCommand(
       }
     }
 
+    const nextLevel = levelForXp(cityBalances.xp);
+    const population = effects.cityPatch?.population ?? city.population;
+    const populationCap = effects.cityPatch?.populationCap ?? city.populationCap;
     await tx
       .update(cities)
       .set({
@@ -180,6 +212,9 @@ export async function runCommand(
         xp: cityBalances.xp,
         gems: cityBalances.gems,
         civicStars: cityBalances.civicStars,
+        level: nextLevel,
+        population,
+        populationCap,
       })
       .where(eq(cities.id, input.cityId));
 
@@ -190,11 +225,12 @@ export async function runCommand(
         name: effects.telemetry.name,
         payload: effects.telemetry.payload,
         contentVersion: CONTENT_VERSION,
-        cityLevel: input.cityLevel,
+        cityLevel: nextLevel,
       });
     }
 
-    const stale = input.fromVersion !== null && input.fromVersion !== Number(city.version);
+    const stale = input.fromVersion !== null && input.fromVersion !== preVersion;
+    const cityResourcesTouched = effects.ledger.some((entry) => isCityResource(entry.resource));
     const touched = [
       ...new Set(effects.ledger.map((entry) => entry.resource).filter((resource) => !isCityResource(resource))),
     ];
@@ -208,12 +244,24 @@ export async function runCommand(
 
     const body = commandSuccessSchema.parse({
       result: effects.result ?? {},
-      delta: presentDelta({
-        fromVersion: Number(city.version),
-        toVersion: versionAfter,
-        inventory: presentInventory(balances),
-        ...(stale ? { city: presentCityHeader(city, versionAfter) } : {}),
-      }),
+      delta: await readChangedDelta(
+        tx,
+        {
+          ...city,
+          coins: cityBalances.coins,
+          xp: cityBalances.xp,
+          gems: cityBalances.gems,
+          civicStars: cityBalances.civicStars,
+          level: nextLevel,
+          population,
+          populationCap,
+          version: versionAfter,
+        },
+        deltaFrom,
+        versionAfter,
+        presentInventory(balances),
+        stale || cityResourcesTouched || effects.cityPatch !== undefined,
+      ),
       cityVersion: versionAfter,
     });
 
@@ -225,8 +273,6 @@ export async function runCommand(
     return { statusCode: 200, body, replayed: false };
   });
 }
-
-type CommandTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 type CityBalances = {
   coins: number;
