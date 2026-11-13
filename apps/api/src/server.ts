@@ -13,7 +13,7 @@ if (databaseUrl === undefined || databaseUrl === "") {
 const handle = createDatabase(databaseUrl);
 await migrate(handle.pool);
 await seedNpcCities(handle.db);
-const app = buildApp({ logger: true, database: handle, corsOrigin: process.env.CORS_ORIGIN });
+const app = buildApp({ logger: true, database: handle, corsOrigin: process.env.CORS_ORIGINS ?? process.env.CORS_ORIGIN });
 
 try {
   await app.listen({ host, port });

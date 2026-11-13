@@ -58,3 +58,7 @@ Run the Vite build before the Playwright smoke test. The smoke test serves `apps
 ## CI
 
 `.github/workflows/ci.yml` runs typecheck, lint, unit tests, API integration tests against a `postgres:16` service, the Vite build, and the Playwright smoke test.
+
+## Deployment
+
+See [deployment preparation](docs/DEPLOYMENT.md) for Vercel and Railway configuration and the approval requirement.

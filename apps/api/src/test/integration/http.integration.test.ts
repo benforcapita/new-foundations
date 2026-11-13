@@ -1,9 +1,10 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, expect, test } from "vitest";
 import { CONTENT_VERSION, ORDER_TEMPLATES, goodById, orderReward } from "@nf/shared";
 import { apiErrorSchema, catalogResponseSchema, commandSuccessSchema, healthResponseSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
+import { sha256Bytes, sha256Hex } from "../../crypto";
 import { lockCityIds, runCommand } from "../../plugins/idempotency";
 import { createDatabase, type DatabaseHandle } from "../../db/client";
 import { migrate } from "../../db/migrate";
@@ -106,12 +107,12 @@ test("guest session creates the starter city, resumes, and rotates on recovery",
     "select token_hash from sessions where user_id = $1",
     [userId],
   );
-  expect(Buffer.from(stored.rows[0]?.token_hash ?? [])).toEqual(createHash("sha256").update(token).digest());
+  expect(Buffer.from(stored.rows[0]?.token_hash ?? [])).toEqual(sha256Bytes(token));
   const recovery = await handle.pool.query<{ recovery_code_hash: string }>(
     "select recovery_code_hash from users where id = $1",
     [userId],
   );
-  expect(recovery.rows[0]?.recovery_code_hash).toBe(sha256(recoveryCode));
+  expect(recovery.rows[0]?.recovery_code_hash).toBe(sha256Hex(recoveryCode));
 
   const ledger = await handle.pool.query<{ total: number; sources: string }>(
     `select coalesce(sum(delta), 0)::int as total, string_agg(source, ',') as sources
@@ -437,7 +438,7 @@ test("concurrent commands on one city each advance the city version", async () =
 
 test("a ledger-writing command records goods and coins balances", async () => {
   const session = await guest();
-  const tokenHash = createHash("sha256").update(session.token).digest();
+  const tokenHash = sha256Bytes(session.token);
   const actor = await handle.pool.query<{ id: string; user_id: string }>(
     "select id, user_id from sessions where token_hash = $1 and revoked_at is null",
     [tokenHash],
@@ -456,7 +457,7 @@ test("a ledger-writing command records goods and coins balances", async () => {
     cityId: session.cityId,
     cityIds: [session.cityId],
     commandId,
-    requestHash: sha256(commandId),
+    requestHash: sha256Hex(commandId),
     fromVersion: 1,
     now: new Date(),
     cityLevel: 1,
@@ -527,7 +528,7 @@ test("a ledger-writing command records goods and coins balances", async () => {
 
 test("a session with revoked_at set cannot authenticate", async () => {
   const session = await guest();
-  const tokenHash = createHash("sha256").update(session.token).digest();
+  const tokenHash = sha256Bytes(session.token);
   const revoked = await handle.pool.query<{ id: string }>(
     "update sessions set revoked_at = now() where token_hash = $1 returning id",
     [tokenHash],
@@ -609,9 +610,6 @@ async function guest(): Promise<{ authorization: string; cityId: string; token: 
   return { authorization: `Bearer ${token}`, cityId: readString(body.cityId), token };
 }
 
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {

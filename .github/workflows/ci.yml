@@ -51,6 +51,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Secret scan
+        run: |
+          node --test tests/secret-scan.test.mjs
+          node tests/secret-scan.mjs
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -65,6 +70,22 @@ jobs:
 
       - name: API integration tests
         run: pnpm test:integration
+
+      - name: API integration tests with pepper
+        run: pnpm test:integration
+        env:
+          SESSION_PEPPER: ci-test-pepper
+
+      - name: API Docker health check
+        run: |
+          docker build -f apps/api/Dockerfile -t nf-api-ci .
+          docker run -d --name nf-api-ci --network host -e DATABASE_URL="$DATABASE_URL" nf-api-ci
+          trap 'docker logs nf-api-ci; docker rm -f nf-api-ci' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:3001/healthz; then exit 0; fi
+            sleep 2
+          done
+          exit 1
 
       - name: Vite build
         run: pnpm --filter @nf/web build
