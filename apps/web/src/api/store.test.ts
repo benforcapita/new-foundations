@@ -38,3 +38,48 @@ describe("sync queue", () => {
     expect(useCityStore.getState().queue).toEqual([]);
   });
 });
+
+describe("queue recovery", () => {
+  it.each([500, 429])("retains a command after an HTTP %i response", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "unavailable" }), { status })));
+    vi.spyOn(api, "snapshot").mockResolvedValue(snapshot);
+    localStorage.setItem("nf_pending_queue:city", JSON.stringify([first]));
+    useCityStore.setState({ queue: [first] });
+    await useCityStore.getState().flush();
+    expect(useCityStore.getState().queue).toEqual([first]);
+    expect(JSON.parse(localStorage.getItem("nf_pending_queue:city") ?? "null")).toEqual([first]);
+  });
+
+  it("removes only the rejected command while retaining a later offline command", async () => {
+    vi.spyOn(api, "command").mockRejectedValueOnce(new ApiError(409, "conflict")).mockRejectedValueOnce(new TypeError("offline"));
+    vi.spyOn(api, "snapshot").mockResolvedValue(snapshot);
+    useCityStore.setState({ queue: [first, second] });
+    await useCityStore.getState().flush();
+    expect(useCityStore.getState().queue).toEqual([second]);
+    expect(JSON.parse(localStorage.getItem("nf_pending_queue:city") ?? "null")).toEqual([second]);
+  });
+
+  it("restores and flushes a saved queue on boot, removing synced commands from storage", async () => {
+    localStorage.setItem("nf_pending_queue:city", JSON.stringify([first]));
+    vi.spyOn(api, "session").mockResolvedValue(session);
+    vi.spyOn(api, "catalog").mockResolvedValue({} as never);
+    vi.spyOn(api, "current").mockResolvedValue(snapshot);
+    let finish!: (value: never) => void;
+    const command = vi.spyOn(api, "command").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    vi.spyOn(api, "snapshot").mockResolvedValue(snapshot);
+    useCityStore.setState({ session: null, snapshot: null });
+    await useCityStore.getState().boot();
+    expect(useCityStore.getState().queue).toEqual([first]);
+    expect(command).toHaveBeenCalledWith(session.token, session.cityId, first.name, first.body, first.key);
+    finish({} as never);
+    await vi.waitFor(() => expect(useCityStore.getState().queue).toEqual([]));
+    expect(JSON.parse(localStorage.getItem("nf_pending_queue:city") ?? "null")).toEqual([]);
+  });
+});
+
+describe("HTTP response handling", () => {
+  it.each([400, 409, 429, 500])("rejects HTTP %i even when the response contains JSON", async (status) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ result: "accepted" }), { status })));
+    await expect(api.acknowledge("token", first.key, { type: "acknowledge", note: "test" })).rejects.toMatchObject({ status });
+  });
+});

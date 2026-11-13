@@ -52,3 +52,28 @@ test("offline command retries with the same idempotency key", async ({ page }) =
   await page.reload();
   await expect(page.getByTestId("city-building").filter({ hasText: "B-001 0,6" })).toHaveCount(1);
 });
+
+test("pending command survives reload and syncs on reconnect", async ({ page }) => {
+  let offline = true;
+  let attempts = 0;
+  await page.route("**/v1/cities/*/commands/place-building", async (route) => {
+    attempts += 1;
+    if (offline) await route.abort();
+    else await route.continue();
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  await placeCottage(page);
+  await expect(page.getByTestId("sync-status")).toContainText("Pending Sync (1)");
+  await expect(page.getByRole("button", { name: "Retry" })).toBeEnabled();
+  await page.reload();
+  await expect(page.getByTestId("sync-status")).toContainText("Pending Sync (1)");
+  await expect.poll(() => attempts).toBe(2);
+  await expect(page.getByRole("button", { name: "Retry" })).toBeEnabled();
+  offline = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.getByTestId("sync-status")).toHaveText("Synced");
+  await expect(page.getByTestId("city-building").filter({ hasText: "B-001 0,6" })).toHaveCount(1);
+  await page.reload();
+  await expect(page.getByTestId("city-building").filter({ hasText: "B-001 0,6" })).toHaveCount(1);
+});
