@@ -11,12 +11,14 @@
     "typecheck": "pnpm exec tsc -p packages/shared/tsconfig.json && pnpm exec tsc -p apps/api/tsconfig.json && pnpm exec tsc -p apps/web/tsconfig.json && pnpm exec tsc -p apps/web/tsconfig.node.json && pnpm exec tsc -p tsconfig.tests.json",
     "lint": "eslint .",
     "test:unit": "vitest run --config vitest.config.ts",
+    "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "db:up": "docker compose up db"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.6.6",
+    "@vitest/coverage-v8": "^5.1.0",
     "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
@@ -26,6 +28,8 @@
     "vitest": "^5.1.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

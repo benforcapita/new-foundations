@@ -1,0 +1,10 @@
+{
+  "street": {
+    "boost": 0.01,
+    "radius": 2
+  },
+  "landmark": {
+    "boost": 0.03,
+    "radius": 3
+  }
+}

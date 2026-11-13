@@ -60,6 +60,9 @@ jobs:
       - name: Unit tests
         run: pnpm test:unit
 
+      - name: Rules coverage
+        run: pnpm test:coverage
+
       - name: API integration tests
         run: pnpm test:integration
 
