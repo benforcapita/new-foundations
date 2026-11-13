@@ -1,0 +1,35 @@
+import { expect, test } from "@playwright/test";
+
+test("the motion setting controls the scene and survives reload", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/");
+  const scene = page.getByTestId("game-canvas");
+  const toggle = page.getByTestId("toggle-reduced-motion");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes");
+  await expect(page.getByTestId("reduced-motion")).toHaveText("no-preference");
+  await expect(scene).toHaveAttribute("data-water-shimmer", "running");
+  await page.getByTestId("vfx-trigger-collect").click();
+  await expect(scene).toHaveAttribute("data-fx-arcs", "5");
+  await expect(page.locator(".coin-flight")).toHaveCount(0);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("reduced-motion")).toHaveText("reduce");
+  await expect(scene).toHaveAttribute("data-water-shimmer", "stopped");
+  await page.getByTestId("vfx-trigger-collect").click();
+  expect(await page.locator(".coin-flight").count()).toBe(0);
+  await expect(page.getByTestId("fx-toast")).toHaveText("Coins collected");
+  await expect(scene).toHaveAttribute("data-fx-arcs", "5");
+  await page.reload();
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("reduced-motion")).toHaveText("reduce");
+  await expect(scene).toHaveAttribute("data-water-shimmer", "stopped");
+  await page.getByTestId("vfx-trigger-collect").click();
+  await expect(scene).toHaveAttribute("data-fx-arcs", "0");
+  await toggle.click();
+  await expect(page.getByTestId("reduced-motion")).toHaveText("no-preference");
+  await expect(scene).toHaveAttribute("data-water-shimmer", "running");
+  await page.getByTestId("vfx-trigger-collect").click();
+  expect(await page.locator(".coin-flight").count()).toBeGreaterThan(0);
+  await expect(scene).toHaveAttribute("data-fx-arcs", "5");
+});

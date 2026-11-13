@@ -8,7 +8,7 @@ test("showcase badges, level up, settings and target sizes", async ({ page }) =>
     await expect(badge.locator("circle").first()).toHaveAttribute("fill", color);
   }
   await page.getByTestId("vfx-trigger-levelup").click(); await expect(page.getByTestId("vfx-levelup")).toBeVisible();
-  await page.getByTestId("vfx-levelup").click(); await expect(page.getByTestId("vfx-levelup")).toHaveCount(0);
+  await page.getByTestId("vfx-levelup").click(); await expect(page.getByTestId("vfx-levelup")).toHaveCount(0, { timeout: 500 });
   await page.getByTestId("vfx-trigger-levelup").click(); await expect(page.getByTestId("vfx-levelup")).toHaveCount(0, { timeout: 2200 });
   await page.getByTestId("toggle-music").click(); await page.getByTestId("toggle-sfx").click(); await page.reload();
   await expect(page.getByTestId("toggle-music")).toHaveAttribute("aria-pressed", "true");
@@ -21,6 +21,13 @@ test("reduced motion announces cues without animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" }); await page.goto("/");
   await expect(page.getByTestId("reduced-motion")).toHaveText("reduce");
   await page.getByTestId("vfx-trigger-collect").click();
+  expect(await page.locator(".coin-flight").count()).toBe(0);
   await expect(page.getByTestId("fx-toast")).toHaveText("Coins collected");
-  await expect(page.locator(".coin-flight")).toHaveCount(0);
+});
+
+test("collect animates without reduced motion", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.goto("/");
+  await page.getByTestId("vfx-trigger-collect").click();
+  expect(await page.locator(".coin-flight").count()).toBeGreaterThan(0);
 });

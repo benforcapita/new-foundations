@@ -204,6 +204,8 @@ export class IsoScene extends Phaser.Scene {
   public create(): void {
     this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches || useSettings.getState().reducedMotion;
     this.drawTerrain();
+    const host = this.game.canvas.parentElement;
+    if (host !== null) host.dataset.fxArcs = "0";
     this.updateWaterMotion();
     this.motionUnsubscribe = useSettings.subscribe(() => this.syncMotion());
     this.drawRoads();
@@ -516,6 +518,8 @@ export class IsoScene extends Phaser.Scene {
       const startX = origin.x + (index - (count - 1) / 2) * 10;
       const startY = origin.y;
       const sprite = this.add.image(startX, startY, texture).setDisplaySize(24, 24).setDepth(20_000);
+      const host = this.game.canvas.parentElement;
+      if (host !== null) host.dataset.fxArcs = String(Number(host.dataset.fxArcs ?? 0) + 1);
       const midX = (startX + target.x) / 2 + (index - (count - 1) / 2) * 16;
       const midY = Math.min(startY, target.y) - 90;
       const progress = { t: 0 };
@@ -573,6 +577,8 @@ export class IsoScene extends Phaser.Scene {
     if (!this.reducedMotion && this.water.length > 0) {
       this.tweens.add({ targets: this.water, alpha: 0.9, duration: 1500, yoyo: true, repeat: -1 });
     }
+    const host = this.game.canvas.parentElement;
+    if (host !== null) host.dataset.waterShimmer = this.tweens.getTweensOf(this.water).length > 0 ? "running" : "stopped";
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
