@@ -79,11 +79,14 @@ export function planPlace(
   const seconds = buildSeconds(placeable, owned);
   const flower = world.quests.find(q => q.questId === "quest_flower_street");
   const flowerDefinition = QUESTS.find(q => q.id === "quest_flower_street");
-  const benchUnlocked = command.definitionId === "D-003" && flower?.status === "ACTIVE" && flower.stepIndex === 6
-    && (flower.stepState["6"] ?? 0) === 0
-    && flowerDefinition !== undefined
+  const firstBench = flower?.status === "ACTIVE" && flower.stepIndex === 6
+    && (flower.stepState["6"] ?? 0) === 0 && flowerDefinition !== undefined
     && flowerDefinition.steps.slice(0, 6).every((step, index) => (flower.stepState[String(index)] ?? 0) >= step.amount)
     && !world.buildings.some(building => building.definitionId === "D-003");
+  const earnedBench = flower !== undefined && (flower.status === "COMPLETED" || flower.status === "CLAIMED"
+    || (flower.status === "ACTIVE" && (flower.stepIndex > 6 || (flower.stepState["6"] ?? 0) >= 1)));
+  const benchUnlocked = command.definitionId === "D-003" && (firstBench || earnedBench)
+    && !world.buildings.some(building => building.definitionId === "D-003" && building.removedAt === null);
   const verdict = canPlace(placementCity(world), benchUnlocked ? { ...placeable.placeable, unlockLevel: 1 } : placeable.placeable, command.x, command.y, command.rotation);
   if (!verdict.ok) {
     const reason = verdict.reasons[0];
@@ -595,6 +598,10 @@ function planUndoRemove(world: World, building: WorldBuilding): Plan {
   }
   if (world.now > building.undoExpiresAt) {
     return failure(409, "STATE_CHANGED", "Undo window has expired");
+  }
+  if (building.definitionId === "D-003" && world.city.level < 4
+    && world.buildings.some(entry => entry.definitionId === "D-003" && entry.removedAt === null)) {
+    return failure(409, "STATE_CHANGED", "A bench is already present");
   }
   const cells = footprintCells(building.definitionId, building.x, building.y, building.rotation);
   const occupied = new Set(

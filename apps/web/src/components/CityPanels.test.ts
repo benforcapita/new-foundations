@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BUILDINGS } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
-import { catalogAvailability, hasReady } from "./cityPanelState";
+import { catalogAvailability, hasReady, canPlaceFlowerBench } from "./cityPanelState";
 
 describe("city HUD decisions", () => {
   const snapshot = { city: { level: 1, coins: 200 }, buildings: [] } as unknown as Snapshot;
@@ -17,4 +17,12 @@ describe("city HUD decisions", () => {
     expect(hasReady(snapshot)).toBe(false);
     expect(hasReady({ ...snapshot, buildings: [{ state: "READY_TO_COLLECT" } as Snapshot["buildings"][number]] })).toBe(true);
   });
+});
+
+it("offers the earned Flower Street bench only when absent", () => {
+  const quest = { questId: "quest_flower_street", status: "CLAIMED", track: "story", periodKey: "-", version: 1, stepState: { "6": 1 } } as Snapshot["quests"][number];
+  const city = { buildings: [], quests: [quest] } as unknown as Snapshot;
+  expect(canPlaceFlowerBench(city)).toBe(true);
+  expect(canPlaceFlowerBench({ ...city, buildings: [{ definitionId: "D-003" } as Snapshot["buildings"][number]] })).toBe(false);
+  expect(canPlaceFlowerBench({ ...city, quests: [{ ...quest, status: "ACTIVE", stepState: {} }] })).toBe(false);
 });
