@@ -172,6 +172,7 @@ export class IsoScene extends Phaser.Scene {
   private badges: Badge[] = [];
   private readonly buildingSprites: { id: string; image: Phaser.GameObjects.Image }[] = [];
   private aimNonce = 0;
+  private lastPhotoMode = false;
   private unsubscribeAim: (() => void) | null = null;
   private readyCrop: CropBob | null = null;
   private lod: LodMode = "detailed";
@@ -232,6 +233,12 @@ export class IsoScene extends Phaser.Scene {
       this.refreshGhost();
     });
     this.unsubscribeAim = useSceneStore.subscribe((state) => {
+      if (state.photoMode !== this.lastPhotoMode) {
+        this.lastPhotoMode = state.photoMode;
+        this.applyLod(lodMode(this.cameras.main.zoom));
+        if (state.photoMode) for (const item of [this.ghostImage, this.ghostIcon, this.ghostLabel, this.ghostHint, this.ghostFoot]) item?.setVisible(false);
+        else this.refreshGhost();
+      }
       const aim = state.aim;
       if (aim === null || aim.nonce === this.aimNonce) {
         return;
@@ -867,6 +874,7 @@ export class IsoScene extends Phaser.Scene {
   private publishCamera(): void {
     const camera = this.cameras.main;
     const mode = lodMode(camera.zoom);
+    if (this.lastPhotoMode !== useSceneStore.getState().photoMode) { this.lastPhotoMode = useSceneStore.getState().photoMode; this.applyLod(mode); }
     if (mode !== this.lod) {
       this.lod = mode;
       this.applyLod(mode);
@@ -884,13 +892,14 @@ export class IsoScene extends Phaser.Scene {
     const readouts: OverlayReadout[] = [];
     for (const badge of this.badges) {
       const collapsed = mode === "collapsed";
-      badge.label?.setVisible(!collapsed);
-      badge.detail?.setVisible(!collapsed);
-      badge.dot.setVisible(collapsed && badge.icon === null);
+      const photo = useSceneStore.getState().photoMode;
+      badge.label?.setVisible(!collapsed && !photo);
+      badge.detail?.setVisible(!collapsed && !photo);
+      badge.dot.setVisible(!photo && collapsed && badge.icon === null);
       if (badge.icon !== null) {
         const size = collapsed ? DOT_ICON : FULL_ICON;
         badge.icon.setDisplaySize(size, size);
-        badge.icon.setVisible(true);
+        badge.icon.setVisible(!photo);
       }
       readouts.push({
         id: badge.id,

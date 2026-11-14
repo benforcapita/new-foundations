@@ -16,7 +16,7 @@ test("settings persist and audio has visual fallback even when muted", () => {
   const data = new Map<string, string>();
   const storage = { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); } };
   expect(readSettings(storage)).toEqual(defaultSettings);
-  const settings = { reducedMotion: true, musicMuted: true, sfxMuted: true };
+  const settings = { reducedMotion: true, musicMuted: true, sfxMuted: true, collectPriority: "default" as const };
   saveSettings(storage, settings);
   expect(readSettings(storage)).toEqual(settings);
   const visual = vi.fn(); const audio: AudioManager = new NoopAudioManager(visual);

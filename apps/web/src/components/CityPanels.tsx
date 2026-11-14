@@ -21,7 +21,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   if (timeBase.current.server !== snapshot?.serverNow) timeBase.current = { server: snapshot?.serverNow, received: Date.now() };
   const selectedId = useSceneStore(s => s.selectedId);
   const building = snapshot?.buildings.find(b => b.id === selectedId);
-  const definition = building && [...BUILDINGS, ...AGRICULTURE].find(d => d.id === building.definitionId);
+  const definition = building && [...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].find(d => d.id === building.definitionId);
   const ready = hasReady(snapshot);
   const enqueue = useCityStore(s => s.enqueue);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer); }, []);
@@ -75,7 +75,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       })}</section>}
     {panel === "warehouse" && snapshot && <section className="city-panel" data-testid="warehouse-panel"><h2>Warehouse</h2><button type="button" onClick={() => setPanel(null)}>Close</button><p data-testid="warehouse-cap">{total(snapshot)}/{snapshot.city.warehouseCap}</p><ul>{Object.entries(snapshot.inventory).map(([id, count]) => <li key={id}>{id}: {count}</li>)}</ul></section>}
     {building && definition && snapshot && <section className="city-panel" data-testid="building-details"><h2>{label(definition.nameKey, definition.id)} ({definition.id})</h2><p>State: {building.state}</p><button type="button" onClick={() => useSceneStore.getState().publish({ selectedId: null })}>Close</button>
-      <button type="button" data-testid="details-move" onClick={() => { usePlacementStore.getState().select(definition.id); useSceneStore.getState().publish({ moveId: building.id, selectedId: null }); }}>Move</button>
+      {!DECORATIONS.some(d => d.id === definition.id) && <button type="button" data-testid="details-move" onClick={() => { usePlacementStore.getState().select(definition.id as Parameters<ReturnType<typeof usePlacementStore.getState>["select"]>[0]); useSceneStore.getState().publish({ moveId: building.id, selectedId: null }); }}>Move</button>}
       <button type="button" data-testid="details-remove" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "remove-building", body: { instanceId: building.id } }); setUndo(building.id); useSceneStore.getState().publish({ selectedId: null }); }}>Remove</button>
       {building.state === "NEEDS_SUPPLY" && <button type="button" data-testid="details-supply" onClick={() => enqueue({ key: crypto.randomUUID(), name: "supply-business", body: { instanceId: building.id } })}>Supply</button>}
       {(building.state === "READY_TO_COLLECT" || (building.definitionId === "B-004" && building.state === "ACTIVE")) && <button type="button" data-testid="details-collect" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.id } }); feedback(); }}>Collect</button>}
