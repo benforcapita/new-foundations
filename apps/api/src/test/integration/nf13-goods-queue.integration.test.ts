@@ -147,3 +147,39 @@ test.each([
   result(await command(s, "supply-business", { instanceId }));
   for (const good of Object.keys(inputs)) expect(await balance(s, good)).toBe(0);
 });
+
+test("cancellation refunds only unfinished jobs, including when finished output is blocked", async () => {
+  const s = await guest(5);
+  const instanceId = await place(s, "B-007");
+  await grant(s, "GOOD_WHEAT", 4);
+  await grant(s, "GOOD_MILK", 2);
+  const first = result(await command(s, "start-production", { instanceId, recipeId: "RCP-BREAD" }));
+  expect(await balance(s, "GOOD_WHEAT")).toBe(2);
+  result(await command(s, "cancel-production", { instanceId, jobId: first.jobId }));
+  expect(await balance(s, "GOOD_WHEAT")).toBe(4);
+
+  const bread = result(await command(s, "start-production", { instanceId, recipeId: "RCP-BREAD" }));
+  const cheese = result(await command(s, "start-production", { instanceId, recipeId: "RCP-CHEESE" }));
+  advance(360);
+  const state = async () => ({
+    jobs: (await db.pool.query("select * from production_jobs where building_id = $1 order by id", [instanceId])).rows,
+    building: (await db.pool.query("select * from building_instances where id = $1", [instanceId])).rows,
+    balances: (await db.pool.query("select * from inventory_balances where city_id = $1 order by good_id", [s.cityId])).rows,
+    ledger: (await db.pool.query("select * from inventory_ledger where city_id = $1 order by id", [s.cityId])).rows,
+  });
+  const before = await state();
+  const finished = await command(s, "cancel-production", { instanceId, jobId: bread.jobId });
+  expect(finished.statusCode).toBe(409);
+  expect(finished.json().error.code).toBe("PRODUCTION_FINISHED");
+  expect(await state()).toEqual(before);
+
+  advance(720);
+  const waiting = await state();
+  const rejected = await command(s, "cancel-production", { instanceId, jobId: cheese.jobId });
+  expect(rejected.statusCode).toBe(409);
+  expect(rejected.json().error.code).toBe("PRODUCTION_FINISHED");
+  expect(await state()).toEqual(waiting);
+  const job = await db.pool.query<{ moved_to_output_at: Date | null; cancelled_at: Date | null }>("select moved_to_output_at, cancelled_at from production_jobs where id = $1", [cheese.jobId]);
+  expect(job.rows[0]).toMatchObject({ moved_to_output_at: null, cancelled_at: null });
+  expect(await balance(s, "GOOD_MILK")).toBe(0);
+});

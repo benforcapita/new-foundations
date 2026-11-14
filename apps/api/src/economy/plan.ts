@@ -323,6 +323,9 @@ export function planCancelProduction(world: World, command: { readonly instanceI
     return failure(404, "NOT_FOUND", "Building not found");
   }
   const job = world.jobs.find((entry) => entry.id === command.jobId && entry.buildingId === building.id);
+  if (job !== undefined && job.cancelledAt === null && job.completesAt <= world.now) {
+    return failure(409, "PRODUCTION_FINISHED", "Finished production jobs cannot be cancelled");
+  }
   if (job === undefined || job.cancelledAt !== null || job.movedToOutputAt !== null) {
     return failure(409, "STATE_CHANGED", "Production job cannot be cancelled");
   }
