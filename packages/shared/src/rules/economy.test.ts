@@ -245,3 +245,8 @@ test("the first cottage and bakery are free and instant, and the first grocery i
   expect(effectivePlacementCost(500, false, 0)).toBe(500);
   expect(effectiveBuildSeconds(120, true, 0)).toBe(0);
 });
+
+test("Town Hall upgrades have meaningful cost and duration", () => {
+  expect(buildingUpgradeCost({ coinCost: 0, buildSeconds: 0, currentLevel: 1, paintUnlocked: false })).toEqual({ ok: true, coins: 400, seconds: 600, goods: [] });
+  expect(buildingUpgradeCost({ coinCost: 0, buildSeconds: 0, currentLevel: 2, paintUnlocked: false })).toEqual({ ok: true, coins: 800, seconds: 1200, goods: [{ goodId: "GOOD_PLANKS", qty: 2 }] });
+});
