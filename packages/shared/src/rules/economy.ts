@@ -1,4 +1,4 @@
-import { WAREHOUSE_UPGRADE } from "../content/upgrades";
+import { BUILDING_UPGRADE, WAREHOUSE_UPGRADE } from "../content/upgrades";
 import { LEVELS } from "../content/levels";
 import { chebyshevFootprints, type FootprintRect } from "./iso";
 
@@ -181,12 +181,12 @@ export function buildingUpgradeCost(input: {
   }
   const goods =
     input.currentLevel === 2
-      ? [{ goodId: input.paintUnlocked ? ("GOOD_PAINT" as const) : ("GOOD_PLANKS" as const), qty: 2 }]
+      ? [{ goodId: input.paintUnlocked ? ("GOOD_PAINT" as const) : ("GOOD_PLANKS" as const), qty: BUILDING_UPGRADE.finalMaterialQuantity }]
       : [];
   return {
     ok: true,
-    coins: Math.round(input.coinCost * 0.8 * input.currentLevel),
-    seconds: input.buildSeconds * input.currentLevel,
+    coins: Math.round((input.coinCost || BUILDING_UPGRADE.zeroBaseCoinCost) * BUILDING_UPGRADE.coinFactor * input.currentLevel),
+    seconds: (input.buildSeconds || BUILDING_UPGRADE.zeroBaseBuildSeconds) * input.currentLevel,
     goods,
   };
 }

@@ -1,7 +1,7 @@
-import { BUILDING_UPGRADE, goodById } from "@nf/shared/content";
+import { goodById } from "@nf/shared/content";
 import { orderCommand } from "./orders";
 import { and, eq } from "drizzle-orm";
-import { QUESTS, warehouseCapacity, warehouseUpgradeCost } from "@nf/shared";
+import { QUESTS, buildingUpgradeCost, warehouseCapacity, warehouseUpgradeCost } from "@nf/shared";
 import { levelRewardEntries } from "../economy/ledger";
 import { buildingInstances, cities, cityCells, quests } from "../db/schema";
 import { planExpansion } from "../economy/expansion";
@@ -253,11 +253,10 @@ async function upgradeBuilding(ctx: CommandContext, cityId: string, body: unknow
   if (!building) throw new ApiError(404, "NOT_FOUND", "Building not found");
   const placeable = findPlaceable(building.definitionId);
   if (!placeable || placeable.kind !== "building" || building.level >= 3 || !(["ACTIVE", "NEEDS_SUPPLY"].includes(building.state)) || building.outputReady || building.cycleStartedAt !== null || building.stock.pendingCoins > 0 || world.jobs.some(j => j.buildingId === instanceId && j.cancelledAt === null && j.movedToOutputAt === null)) throw new ApiError(409, "STATE_CHANGED", "Building cannot be upgraded now");
-  const coins = Math.floor(placeable.definition.cost.coins * BUILDING_UPGRADE.coinFactor * building.level);
-  const material = world.city.level >= goodById("GOOD_PAINT").unlockLevel ? "GOOD_PAINT" : "GOOD_PLANKS";
-  const qty = building.level === 2 ? BUILDING_UPGRADE.finalMaterialQuantity : 0;
-  if (world.city.coins < coins || (world.balances[material] ?? 0) < qty) throw new ApiError(409, "INSUFFICIENT_GOODS", "Not enough resources");
-  const completesAt = new Date(ctx.now.getTime() + placeable.definition.buildSeconds * building.level * 1000);
+  const cost = buildingUpgradeCost({ coinCost: placeable.definition.cost.coins, buildSeconds: placeable.definition.buildSeconds, currentLevel: building.level, paintUnlocked: world.city.level >= goodById("GOOD_PAINT").unlockLevel });
+  if (!cost.ok) throw new ApiError(409, "STATE_CHANGED", "Building cannot be upgraded now");
+  if (world.city.coins < cost.coins || cost.goods.some(good => (world.balances[good.goodId] ?? 0) < good.qty)) throw new ApiError(409, "INSUFFICIENT_GOODS", "Not enough resources");
+  const completesAt = new Date(ctx.now.getTime() + cost.seconds * 1000);
   await ctx.tx.update(buildingInstances).set({ state: "UPGRADING", upgradeCompletesAt: completesAt, version: ctx.versionAfter }).where(eq(buildingInstances.id, instanceId));
-  return { ledger: [...(coins ? [{ resource: "COINS", delta: -coins, source: "building_upgrade" }] : []), ...(qty ? [{ resource: material, delta: -qty, source: "building_upgrade" }] : [])], result: { instanceId, completesAt: completesAt.toISOString() } };
+  return { ledger: [{ resource: "COINS", delta: -cost.coins, source: "building_upgrade" }, ...cost.goods.map(good => ({ resource: good.goodId, delta: -good.qty, source: "building_upgrade" }))], result: { instanceId, completesAt: completesAt.toISOString() } };
 }

@@ -85,3 +85,38 @@ test.each(["QUEST_FIRST", "OLDEST_FIRST"] as const)("%s collects the proper stac
   const remaining = await handle.pool.query<{ output_ready: { qty?: number } }>("select output_ready from building_instances where id = $1", [priority === "QUEST_FIRST" ? old.id : quest.id]);
   expect(remaining.rows[0]?.output_ready.qty).toBe(3);
 });
+
+test("Town Hall upgrade charges resources and raises the cap only on completion", async () => {
+  const session = (await app.inject({ method: "POST", url: "/v1/auth/session", payload: {} })).json() as { token: string; cityId: string };
+  const command = (name: string, payload: object) => app.inject({ method: "POST", url: `/v1/cities/${session.cityId}/commands/${name}`, headers: { authorization: `Bearer ${session.token}`, "idempotency-key": randomUUID() }, payload });
+  const instanceId = (await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'B-009'", [session.cityId])).rows[0].id as string;
+  await handle.pool.query("update cities set coins = 399 where id = $1", [session.cityId]);
+  const insufficient = await command("upgrade-building", { instanceId });
+  expect(insufficient.statusCode).toBe(409);
+  expect(insufficient.json()).toMatchObject({ error: { code: "INSUFFICIENT_GOODS" } });
+  await handle.pool.query("update cities set coins = 1200 where id = $1", [session.cityId]);
+  expect((await command("upgrade-building", { instanceId })).statusCode).toBe(200);
+  let row = (await handle.pool.query("select state, level, upgrade_completes_at from building_instances where id = $1", [instanceId])).rows[0];
+  expect(row).toMatchObject({ state: "UPGRADING", level: 1 });
+  expect(row.upgrade_completes_at.getTime()).toBe(now.getTime() + 600_000);
+  expect((await handle.pool.query("select coins, population_cap from cities where id = $1", [session.cityId])).rows[0]).toEqual({ coins: "800", population_cap: 50 });
+  now = new Date(row.upgrade_completes_at.getTime() - 1);
+  await command("collect-all", {});
+  expect((await handle.pool.query("select population_cap from cities where id = $1", [session.cityId])).rows[0].population_cap).toBe(50);
+  now = new Date(now.getTime() + 1);
+  await command("collect-all", {});
+  expect((await handle.pool.query("select population_cap from cities where id = $1", [session.cityId])).rows[0].population_cap).toBe(63);
+  const noPlanks = await command("upgrade-building", { instanceId });
+  expect(noPlanks.statusCode).toBe(409);
+  expect(noPlanks.json()).toMatchObject({ error: { code: "INSUFFICIENT_GOODS" } });
+  await handle.pool.query("insert into inventory_balances (city_id, good_id, qty, version) values ($1, 'GOOD_PLANKS', 2, 1) on conflict (city_id, good_id) do update set qty = 2", [session.cityId]);
+  expect((await command("upgrade-building", { instanceId })).statusCode).toBe(200);
+  row = (await handle.pool.query("select state, level, upgrade_completes_at from building_instances where id = $1", [instanceId])).rows[0];
+  expect(row).toMatchObject({ state: "UPGRADING", level: 2 });
+  expect(row.upgrade_completes_at.getTime()).toBe(now.getTime() + 1_200_000);
+  expect((await handle.pool.query("select coins, population_cap from cities where id = $1", [session.cityId])).rows[0]).toEqual({ coins: "0", population_cap: 63 });
+  expect((await handle.pool.query("select qty from inventory_balances where city_id = $1 and good_id = 'GOOD_PLANKS'", [session.cityId])).rows[0].qty).toBe(0);
+  now = new Date(row.upgrade_completes_at.getTime());
+  await command("collect-all", {});
+  expect((await handle.pool.query("select population_cap from cities where id = $1", [session.cityId])).rows[0].population_cap).toBe(75);
+});
