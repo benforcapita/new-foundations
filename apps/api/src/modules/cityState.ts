@@ -1,5 +1,5 @@
-import { presentedOrder, presentedFranchise, presentedQuest } from "./snapshot";
-import { and, count, eq, gt, inArray, isNull } from "drizzle-orm";
+import { presentedOrder, presentedFranchise, presentedQuest, presentedTrain } from "./snapshot";
+import { and, count, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { TERRAIN_KINDS, type TerrainKind } from "@nf/shared/content";
 import { BUILDING_STATES, type BuildingState } from "@nf/shared/rules";
 import type { Delta } from "@nf/shared/schemas";
@@ -15,7 +15,7 @@ import type { Plan } from "../economy/plan";
 import { buildingLevel, resolveTimers } from "../economy/timers";
 import { projectPopulation, type World, type WorldBuilding, type WorldCell, type WorldJob, type WorldQuest } from "../economy/model";
 import type { Database } from "../db/client";
-import { buildingCells, buildingInstances, cities, cityCells, franchises, inventoryBalances, orderInstances, productionJobs, quests } from "../db/schema";
+import { buildingCells, buildingInstances, cities, cityCells, franchises, inventoryBalances, orderInstances, productionJobs, quests, trainShipments } from "../db/schema";
 import { ApiError } from "../errors";
 import {
   presentCityHeader,
@@ -144,7 +144,9 @@ export async function readChangedDelta(
   const changedQuests = await tx.select().from(quests).where(and(eq(quests.cityId, city.id), gt(quests.version, fromVersion)));
   const changedFranchises = await tx.select().from(franchises).where(and(eq(franchises.ownerCity, city.id), gt(franchises.version, fromVersion)));
   const counts = includeCity ? await tx.select({ definitionId: buildingInstances.definitionId, count: count() }).from(buildingInstances).where(eq(buildingInstances.cityId, city.id)).groupBy(buildingInstances.definitionId) : [];
+  const changedTrains = await tx.select().from(trainShipments).where(and(eq(trainShipments.cityId, city.id), gt(trainShipments.version, fromVersion), sql`${trainShipments.status} <> 'ARRIVED'`));
   return presentDelta({
+    train: changedTrains[0] ? presentedTrain(changedTrains[0]) : undefined,
     orders: changedOrders.map(presentedOrder),
     quests: changedQuests.map(presentedQuest),
     franchises: changedFranchises.map(presentedFranchise),

@@ -14,7 +14,7 @@ function feedback() {
   else { window.dispatchEvent(new CustomEvent("nf-fx", { detail: "collect" })); window.dispatchEvent(new CustomEvent("nf-fx", { detail: "xp" })); }
 }
 export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
-  const [panel, setPanel] = useState<"catalog" | "warehouse" | "quests" | null>(null);
+  const [panel, setPanel] = useState<"catalog" | "warehouse" | "quests" | "train" | null>(null);
   const [warehouseFull, setWarehouseFull] = useState<{ collected: number; remaining: number } | null>(null);
   const [undo, setUndo] = useState<string | null>(null);
   const [clock, setClock] = useState(Date.now());
@@ -31,6 +31,12 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   }, [snapshot]);
   const timeBase = useRef({ server: snapshot?.serverNow, received: Date.now() });
   if (timeBase.current.server !== snapshot?.serverNow) timeBase.current = { server: snapshot?.serverNow, received: Date.now() };
+  useEffect(() => {
+    if (snapshot?.train?.state !== "IN_TRANSIT" || !snapshot.train.returnsAt || !snapshot.buildings.some(b => b.definitionId === "B-011")) return;
+    const delay = Math.max(0, Date.parse(snapshot.train.returnsAt) - Date.parse(snapshot.serverNow));
+    const timer = setTimeout(() => { void useCityStore.getState().boot(); }, delay + 100);
+    return () => clearTimeout(timer);
+  }, [snapshot?.train?.id, snapshot?.train?.state, snapshot?.train?.returnsAt, snapshot?.serverNow, snapshot?.buildings]);
   const selectedId = useSceneStore(s => s.selectedId);
   const building = snapshot?.buildings.find(b => b.id === selectedId);
   const definition = building && [...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].find(d => d.id === building.definitionId);
@@ -68,6 +74,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       <button type="button" onClick={() => setPanel("warehouse")}>Warehouse {snapshot ? `${total(snapshot)}/${snapshot.city.warehouseCap}` : "—"}</button>
       <button type="button" data-testid="quest-tracker-open" onClick={() => setPanel("quests")}>Quest: {quest ? label(QUESTS.find(q => q.id === quest.questId)?.nameKey ?? "", quest.questId) : "None"}</button>
       <button type="button" data-testid="collect-all" disabled={!ready} onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect-all", body: {} }); feedback(); }}>Collect All (C)</button>
+      {snapshot && snapshot.city.level >= 3 && <button type="button" data-testid="train-open" onClick={() => setPanel("train")}>🚂 Tom · Train Station</button>}
       <button type="button" data-testid="build-catalog-open" onClick={() => setPanel("catalog")}>Build</button>
     </section>
     {snapshot && panel === "quests" && <section className="city-panel" data-testid="quest-tracker" aria-label="Quests">
@@ -88,6 +95,14 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
           {q.status === "COMPLETED" && <button type="button" data-testid={`quest-claim-${q.questId}`} onClick={() => { enqueue({ key: crypto.randomUUID(), name: "claim-quest", body: { questId: q.questId, periodKey: q.periodKey } }); feedback(); }}>Claim</button>}
         </article>;
       })}
+    </section>}
+    {panel === "train" && snapshot && <section className="city-panel" data-testid="train-panel" aria-label="Train Station">
+      <h2>🚂 Tom's Train Station</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
+      {!snapshot.train ? <p>Tom: Build a Train Station to start shipping goods.</p> : snapshot.train.state === "IN_TRANSIT" ? <p>Your next train is on its way.</p> : <>
+        <p>Tom: Fill wagons for instant pay. Fill all three for a bonus!</p>
+        {snapshot.train.wagons.map((wagon, index) => <div key={index} data-testid={`train-wagon-${index}`}><span>Wagon {index + 1}: {wagon.qty} {wagon.goodId} — {wagon.filled ? "Filled" : `${wagon.reward} coins`}</span> <button type="button" disabled={wagon.filled || (snapshot.inventory[wagon.goodId] ?? 0) < wagon.qty} onClick={() => enqueue({ key: crypto.randomUUID(), name: "train-supply", body: { wagonIndex: index, qty: wagon.qty } })}>Fill wagon</button></div>)}
+        <button type="button" data-testid="train-dispatch" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "train-dispatch", body: {} }); window.dispatchEvent(new CustomEvent("nf-fx", { detail: "train-smoke" })); }}>Dispatch train</button>
+      </>}
     </section>}
     {panel === "catalog" && snapshot && <section className="city-panel" aria-label="Build catalog"><h2>Build catalog</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
       {[...BUILDINGS, ...AGRICULTURE, ...DECORATIONS, ROAD].map(d => {

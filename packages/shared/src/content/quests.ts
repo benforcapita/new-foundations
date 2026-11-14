@@ -1,4 +1,7 @@
+import trainBalance from "./train.balance.json" with { type: "json" };
+
 export type QuestEvent =
+  | "train_supplied"
   | "building_placed"
   | "goods_produced"
   | "goods_collected"
@@ -29,6 +32,16 @@ export type QuestDefinition = {
 };
 
 export const QUESTS: readonly QuestDefinition[] = [
+  {
+    id: "quest_tom_train",
+    nameKey: "quest.tom_train.title",
+    track: "story",
+    prerequisites: [],
+    steps: [{ event: "train_supplied", filter: {}, amount: trainBalance.introWagonsRequired }],
+    reward: trainBalance.introQuestReward,
+    canExpire: false,
+    canPurchaseSkip: false,
+  },
   {
     id: "quest_tutorial_house",
     nameKey: "tutorial.build_house",

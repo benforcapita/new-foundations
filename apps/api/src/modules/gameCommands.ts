@@ -1,4 +1,5 @@
 import { BUILDING_UPGRADE, goodById } from "@nf/shared/content";
+import { trainCommand } from "./train";
 import { orderCommand } from "./orders";
 import { and, eq } from "drizzle-orm";
 import { QUESTS, warehouseCapacity, warehouseUpgradeCost } from "@nf/shared";
@@ -24,6 +25,8 @@ import { applyPlan, loadWorld } from "./cityState";
 import type { World } from "../economy/model";
 
 const CITY_COMMANDS = [
+  "train-supply",
+  "train-dispatch",
   "place-building",
   "move-building",
   "remove-building",
@@ -56,6 +59,8 @@ export function assertCityCommand(name: string): CityCommandName {
 
 export function assertCityCommandBody(name: CityCommandName, body: unknown): void {
   switch (name) {
+    case "train-supply":
+    case "train-dispatch":
     case "upgrade-building":
     case "upgrade-warehouse":
     case "set-collect-priority":
@@ -103,6 +108,8 @@ export function assertCityCommandBody(name: CityCommandName, body: unknown): voi
 }
 
 export async function runCityCommand(ctx: CommandContext, cityId: string, name: CityCommandName, body: unknown): Promise<CommandEffects> {
+  if (name === "train-supply") return trainCommand(ctx, cityId, name, parseCommand(commandBodySchemas[name], body));
+  if (name === "train-dispatch") return trainCommand(ctx, cityId, name, parseCommand(commandBodySchemas[name], body));
   if (name === "upgrade-building") return upgradeBuilding(ctx, cityId, body);
   if (name === "upgrade-warehouse" || name === "set-collect-priority") return warehouseCommand(ctx, cityId, name, body);
   if (name === "claim-quest") return claimQuest(ctx, cityId, body);
@@ -128,7 +135,7 @@ export async function runCityCommand(ctx: CommandContext, cityId: string, name: 
   };
 }
 
-export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order" | "claim-quest" | "upgrade-warehouse" | "upgrade-building" | "set-collect-priority">, body: unknown): Plan {
+export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order" | "claim-quest" | "upgrade-warehouse" | "upgrade-building" | "set-collect-priority" | "train-supply" | "train-dispatch">, body: unknown): Plan {
   const ids = { instanceId: randomUUID(), jobId: randomUUID(), undoToken: randomUUID() };
   switch (name) {
     case "place-building":
