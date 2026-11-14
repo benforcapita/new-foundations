@@ -69,6 +69,7 @@ export type WorldJob = {
 export type WorldQuest = {
   readonly questId: string;
   readonly status: "ACTIVE" | "COMPLETED" | "CLAIMED";
+  readonly stepIndex: number;
   readonly stepState: Readonly<Record<string, number>>;
 };
 

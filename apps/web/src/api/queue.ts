@@ -1,17 +1,26 @@
-import { RECIPES } from "@nf/shared";
+import { QUESTS, RECIPES } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import type { CommandBody } from "./client";
-type Name = "place-building" | "move-building" | "remove-building" | "collect" | "collect-all" | "start-production" | "cancel-production" | "supply-business" | "fulfill-order" | "reroll-order";
+type Name = "claim-quest" | "place-building" | "move-building" | "remove-building" | "collect" | "collect-all" | "start-production" | "cancel-production" | "supply-business" | "fulfill-order" | "reroll-order";
 export type PendingCommand = { [N in Name]: { key: string; name: N; body: CommandBody<N> } }[Name];
 export function composeSnapshot(snapshot: Snapshot, queue: readonly PendingCommand[]): Snapshot {
   let buildings = [...snapshot.buildings];
   let jobs = [...(snapshot.jobs ?? [])];
   let orders = [...(snapshot.orders ?? [])];
+  let quests = [...(snapshot.quests ?? [])];
   const inventory = { ...snapshot.inventory };
   let city = snapshot.city;
   const removed = new Map<string, Snapshot["buildings"][number]>();
   for (const command of queue) {
     switch (command.name) {
+      case "claim-quest": {
+        const quest = quests.find(q => q.questId === command.body.questId && q.periodKey === command.body.periodKey && q.status === "COMPLETED");
+        const definition = QUESTS.find(q => q.id === command.body.questId);
+        if (!quest || !definition) break;
+        city = { ...city, coins: city.coins + definition.reward.coins, xp: city.xp + definition.reward.xp };
+        quests = quests.map(q => q === quest ? { ...q, status: "CLAIMED" } : q);
+        break;
+      }
       case "fulfill-order":
       case "reroll-order": {
         const order = orders.find(o => o.id === command.body.orderId && o.status === "OPEN");
@@ -45,5 +54,5 @@ export function composeSnapshot(snapshot: Snapshot, queue: readonly PendingComma
       case "cancel-production": jobs = jobs.filter(j => j.id !== command.body.jobId); buildings = buildings.map(b => b.id === command.body.instanceId && !jobs.some(j => j.buildingId === b.id) ? { ...b, state: "ACTIVE" } : b); break;
     }
   }
-  return { ...snapshot, buildings, jobs, orders, inventory, city };
+  return { ...snapshot, buildings, jobs, orders, quests, inventory, city };
 }

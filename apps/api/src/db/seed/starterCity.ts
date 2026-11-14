@@ -13,7 +13,7 @@ import {
   type QuestDefinition,
 } from "@nf/shared";
 import type { Database } from "../client";
-import { buildingCells, buildingInstances, cities, cityCells, inventoryBalances, inventoryLedger, orderInstances, quests, sessions, users } from "../schema";
+import { buildingCells, buildingInstances, cities, cityCells, inventoryBalances, inventoryLedger, orderInstances, quests, sessions, telemetryEvents, users } from "../schema";
 import { randomSecret, sha256Bytes, sha256Hex } from "../../crypto";
 
 const STARTER_COINS = 750;
@@ -61,11 +61,12 @@ export async function createGuest(db: Database): Promise<IssuedSession> {
       recoveryCodeHash: sha256Hex(recoveryCode),
     });
     await insertStarterCity(tx, userId, cityId);
-    await tx.insert(sessions).values({
+    const [session] = await tx.insert(sessions).values({
       userId,
       tokenHash: sha256Bytes(token),
       lastSeenAt: new Date(),
-    });
+    }).returning({ id: sessions.id });
+    await tx.insert(telemetryEvents).values({ playerId: userId, sessionId: session?.id, name: "tutorial_started", payload: {}, contentVersion: CONTENT_VERSION, cityLevel: 1 });
   });
   return { token, userId, cityId, isNew: true, recoveryCode };
 }

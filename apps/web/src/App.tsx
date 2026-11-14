@@ -3,6 +3,7 @@ import { APP_NAME } from "@nf/shared";
 import { useEffect } from "react";
 import { Boards } from "./components/Boards";
 import { CityPanels } from "./components/CityPanels";
+import { Tutorial } from "./components/Tutorial";
 import { Feedback } from "./components/Feedback";
 import { GameCanvas } from "./GameCanvas";
 import { usePlacementStore, useSceneStore } from "./game/scene-store";
@@ -40,6 +41,7 @@ export function App() {
       </header>
       {!demo && <p>Click a ready building to collect; Shift-click a building to move it.</p>}
       <CityPanels snapshot={snapshot} />
+      {!demo && snapshot && <Tutorial snapshot={snapshot} />}
       {snapshot && <Boards snapshot={snapshot} />}
       <div className="toolbar">
         <button type="button" data-testid="place-cottage" onClick={() => selectBuilding("B-001")}>

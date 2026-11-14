@@ -1,6 +1,8 @@
 import { orderCommand } from "./orders";
-import { eq } from "drizzle-orm";
-import { cities, cityCells } from "../db/schema";
+import { and, eq } from "drizzle-orm";
+import { QUESTS } from "@nf/shared";
+import { levelRewardEntries } from "../economy/ledger";
+import { cities, cityCells, quests } from "../db/schema";
 import { planExpansion } from "../economy/expansion";
 import { randomUUID } from "node:crypto";
 import { commandBodySchemas, placeBuildingCommandSchema } from "@nf/shared/schemas";
@@ -32,6 +34,7 @@ const CITY_COMMANDS = [
   "expand-land",
   "fulfill-order",
   "reroll-order",
+  "claim-quest",
 ] as const;
 
 export type CityCommandName = (typeof CITY_COMMANDS)[number];
@@ -49,6 +52,9 @@ export function assertCityCommand(name: string): CityCommandName {
 
 export function assertCityCommandBody(name: CityCommandName, body: unknown): void {
   switch (name) {
+    case "claim-quest":
+      parseCommand(commandBodySchemas["claim-quest"], body);
+      return;
     case "fulfill-order":
     case "reroll-order":
       parseCommand(commandBodySchemas[name], body);
@@ -88,6 +94,7 @@ export function assertCityCommandBody(name: CityCommandName, body: unknown): voi
 }
 
 export async function runCityCommand(ctx: CommandContext, cityId: string, name: CityCommandName, body: unknown): Promise<CommandEffects> {
+  if (name === "claim-quest") return claimQuest(ctx, cityId, body);
   if (name === "expand-land") return expandLand(ctx, cityId, body);
   if (name === "fulfill-order" || name === "reroll-order") return orderCommand(ctx, cityId, name, parseCommand(commandBodySchemas[name], body).orderId);
   const plan = planCityCommand(await loadWorld(ctx.tx, cityId, ctx.now), name, body);
@@ -110,7 +117,7 @@ export async function runCityCommand(ctx: CommandContext, cityId: string, name: 
   };
 }
 
-export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order">, body: unknown): Plan {
+export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order" | "claim-quest">, body: unknown): Plan {
   const ids = { instanceId: randomUUID(), jobId: randomUUID(), undoToken: randomUUID() };
   switch (name) {
     case "place-building":
@@ -176,4 +183,35 @@ async function expandLand(ctx: CommandContext, cityId: string, body: unknown): P
   }
   await ctx.tx.insert(cityCells).values(cells);
   return { ledger: [{ resource: "COINS", delta: -plan.cost, source: "expansion_claimed" }], result: { ...command, cost: plan.cost }, telemetry: { name: "expansion_claimed", payload: { ...command } } };
+}
+
+async function claimQuest(ctx: CommandContext, cityId: string, body: unknown): Promise<CommandEffects> {
+  const command = parseCommand(commandBodySchemas["claim-quest"], body);
+  const definition = QUESTS.find(q => q.id === command.questId);
+  const [quest] = await ctx.tx.select().from(quests).where(and(eq(quests.cityId, cityId), eq(quests.questId, command.questId), eq(quests.periodKey, command.periodKey)));
+  if (!definition || !quest || quest.status !== "COMPLETED") throw new ApiError(409, "STATE_CHANGED", "Quest is not available to claim");
+  let removedRewardDecoration = false;
+  if (definition.reward.decorationId) {
+    const world = await loadWorld(ctx.tx, cityId, ctx.now);
+    removedRewardDecoration = world.buildings.some(b => b.definitionId === definition.reward.decorationId && b.removedAt !== null)
+      && !world.buildings.some(b => b.definitionId === definition.reward.decorationId && b.removedAt === null);
+    if (!world.buildings.some(b => b.definitionId === definition.reward.decorationId)) {
+      let placed = false;
+      for (const cell of world.cells) {
+        const plan = planPlace({ ...world, city: { ...world.city, level: Math.max(world.city.level, 4) } }, { definitionId: definition.reward.decorationId, x: cell.x, y: cell.y, rotation: 0 }, { instanceId: randomUUID(), jobId: randomUUID(), undoToken: randomUUID() });
+        if (plan.ok) { await applyPlan(ctx.tx, cityId, plan, ctx.versionAfter); placed = true; break; }
+      }
+      if (!placed) throw new ApiError(409, "STATE_CHANGED", "No open space for the bench");
+    }
+  }
+  const [city] = await ctx.tx.select().from(cities).where(eq(cities.id, cityId));
+  if (!city) throw new ApiError(404, "NOT_FOUND", "City not found");
+  await ctx.tx.update(quests).set({ status: "CLAIMED", version: ctx.versionAfter }).where(and(eq(quests.cityId, cityId), eq(quests.questId, command.questId), eq(quests.periodKey, command.periodKey)));
+  const ledger = [
+    { resource: "COINS", delta: definition.reward.coins, source: "quest_claimed" },
+    { resource: "XP", delta: definition.reward.xp, source: "quest_claimed" },
+    ...levelRewardEntries(Number(city.xp), Number(city.xp) + definition.reward.xp),
+  ].filter(entry => entry.delta !== 0);
+  const reward = removedRewardDecoration ? { coins: definition.reward.coins, xp: definition.reward.xp } : definition.reward;
+  return { ledger, result: { questId: definition.id, reward } };
 }

@@ -409,7 +409,7 @@ test("collect keeps leftover output when the warehouse is full and prefers quest
   const world = {
     ...withBuilding(withBuilding({ ...base, buildings: base.buildings.filter((entry) => entry.definitionId !== "AG-001") }, wheatReady), breadReady),
     balances: { GOOD_BREAD: 0 },
-    quests: [{ questId: "quest_early_bakery_01", status: "ACTIVE" as const, stepState: { "0": 1, "1": 0 } }],
+    quests: [{ questId: "quest_early_bakery_01", status: "ACTIVE" as const, stepIndex: 1, stepState: { "0": 1, "1": 0 } }],
   };
   const collected = planCollect(world, {});
   expect(collected.ok).toBe(true);

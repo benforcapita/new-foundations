@@ -116,3 +116,9 @@ button, input, select, a[href], [role="button"] { min-width: 44px; min-height: 4
 .board-panel { max-height: 65vh; overflow: auto; }
 .board-card { border: 1px solid #8ca69a; padding: 12px; margin: 8px 0; }
 .good-icon { width: 28px; height: 28px; object-fit: contain; vertical-align: middle; }
+
+.tutorial { display: flex; align-items: center; gap: 12px; background: #f8eedb; color: #253d4a; padding: 8px; }
+.tutorial .npc-badge { width: 90px; font-size: 11px; }
+.tutorial .npc-badge svg { width: 40px; height: 40px; }
+
+.tutorial-target { position: absolute; width: 55px; height: 28px; border: 3px solid #31e872; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 1; }

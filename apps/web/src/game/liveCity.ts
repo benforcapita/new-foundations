@@ -1,4 +1,4 @@
-import { AGRICULTURE, BUILDINGS, CHUNK_SIZE, STARTER_MAP, agricultureById, buildingById, rotatedFootprint, type AgricultureId, type BuildingId, type PlacementCity } from "@nf/shared";
+import { AGRICULTURE, BUILDINGS, DECORATIONS, CHUNK_SIZE, STARTER_MAP, agricultureById, buildingById, rotatedFootprint, type AgricultureId, type BuildingId, type PlacementCity } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import type { DemoBuilding, DemoPlot } from "./demoCity";
 
@@ -13,7 +13,7 @@ export function livePlacementCity(snapshot: Snapshot): PlacementCity {
   const ownedCounts: Record<string, number> = {};
   for (const building of snapshot.buildings) {
     const id = building.definitionId;
-    const definition = BUILDINGS.some((item) => item.id === id) ? buildingById(id as BuildingId) : AGRICULTURE.some((item) => item.id === id) ? agricultureById(id as AgricultureId) : null;
+    const definition = BUILDINGS.some((item) => item.id === id) ? buildingById(id as BuildingId) : AGRICULTURE.some((item) => item.id === id) ? agricultureById(id as AgricultureId) : DECORATIONS.find(d => d.id === id) ?? null;
     if (!definition) continue;
     ownedCounts[id] = (ownedCounts[id] ?? 0) + 1;
     const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, building.rotation);

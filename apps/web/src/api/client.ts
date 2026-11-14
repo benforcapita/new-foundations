@@ -1,8 +1,8 @@
-import { AGRICULTURE, type AgricultureId } from "@nf/shared";
+import { AGRICULTURE, DECORATIONS, type AgricultureId, type DecorationId } from "@nf/shared";
 import { catalogResponseSchema, commandBodySchemas, commandSuccessSchema, deltaSchema, snapshotSchema, type CommandName } from "@nf/shared/schemas";
 
 export type Session = { token: string; userId: string; cityId: string; isNew: boolean; recoveryCode?: string };
-export type CommandBody<N extends CommandName> = N extends "place-building" ? Omit<(typeof commandBodySchemas)["place-building"]["_output"], "definitionId"> & { definitionId: (typeof commandBodySchemas)["place-building"]["_output"]["definitionId"] | AgricultureId } : (typeof commandBodySchemas)[N]["_output"];
+export type CommandBody<N extends CommandName> = N extends "place-building" ? Omit<(typeof commandBodySchemas)["place-building"]["_output"], "definitionId"> & { definitionId: (typeof commandBodySchemas)["place-building"]["_output"]["definitionId"] | AgricultureId | DecorationId } : (typeof commandBodySchemas)[N]["_output"];
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message); }
 }
@@ -41,7 +41,7 @@ export const api = {
     return request("/v1/cities/current/commands/acknowledge", { method: "POST", headers: { ...auth(token), "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(body) });
   },
   async command<N extends CommandName>(token: string, cityId: string, name: N, body: CommandBody<N>, key: string) {
-    const validated = name === "place-building" && AGRICULTURE.some((item) => item.id === (body as CommandBody<"place-building">).definitionId)
+    const validated = name === "place-building" && [...AGRICULTURE, ...DECORATIONS].some((item) => item.id === (body as CommandBody<"place-building">).definitionId)
       ? { ...commandBodySchemas["place-building"].parse({ ...body, definitionId: "B-001" }), definitionId: (body as CommandBody<"place-building">).definitionId }
       : commandBodySchemas[name].parse(body);
     return commandSuccessSchema.parse(await request(`/v1/cities/${encodeURIComponent(cityId)}/commands/${name}`, { method: "POST", headers: { ...auth(token), "Content-Type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(validated) }));

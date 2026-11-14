@@ -77,7 +77,14 @@ export function planPlace(
   const owned = activeBuildings(world.buildings).filter((building) => building.definitionId === command.definitionId).length;
   const charged = chargedCoins(placeable, owned);
   const seconds = buildSeconds(placeable, owned);
-  const verdict = canPlace(placementCity(world), placeable.placeable, command.x, command.y, command.rotation);
+  const flower = world.quests.find(q => q.questId === "quest_flower_street");
+  const flowerDefinition = QUESTS.find(q => q.id === "quest_flower_street");
+  const benchUnlocked = command.definitionId === "D-003" && flower?.status === "ACTIVE" && flower.stepIndex === 6
+    && (flower.stepState["6"] ?? 0) === 0
+    && flowerDefinition !== undefined
+    && flowerDefinition.steps.slice(0, 6).every((step, index) => (flower.stepState[String(index)] ?? 0) >= step.amount)
+    && !world.buildings.some(building => building.definitionId === "D-003");
+  const verdict = canPlace(placementCity(world), benchUnlocked ? { ...placeable.placeable, unlockLevel: 1 } : placeable.placeable, command.x, command.y, command.rotation);
   if (!verdict.ok) {
     const reason = verdict.reasons[0];
     if (reason === undefined) {
@@ -123,7 +130,7 @@ export function planPlace(
     ledger,
     result: { instanceId: building.id, state: building.state, cost: charged, xp, ...population },
     telemetry: {
-      name: "building_placed",
+      name: placeable.kind === "decoration" ? "decoration_placed" : "building_placed",
       payload: { definitionId: building.definitionId, instanceId: building.id, x: building.x, y: building.y },
     },
     cityPatch: population,
