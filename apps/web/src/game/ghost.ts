@@ -31,7 +31,7 @@ export function reasonLabel(reason: PlaceReason): string {
     case "INSUFFICIENT_COINS":
       return "Not enough coins";
     case "POP_CAP":
-      return "Population cap";
+      return "Build a civic building to grow";
     default: {
       const unreachable: never = reason;
       return unreachable;

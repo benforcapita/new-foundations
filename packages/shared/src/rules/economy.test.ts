@@ -227,8 +227,12 @@ test("xp thresholds promote the city at each cumulative gate", () => {
   expect(levelForXp(0)).toBe(1);
   expect(levelForXp(49)).toBe(1);
   expect(levelForXp(50)).toBe(2);
-  expect(levelForXp(4099)).toBe(14);
-  expect(levelForXp(4100)).toBe(15);
+  expect(levelForXp(169)).toBe(2);
+  expect(levelForXp(170)).toBe(3);
+  expect(levelForXp(389)).toBe(3);
+  expect(levelForXp(390)).toBe(4);
+  expect(levelForXp(20739)).toBe(14);
+  expect(levelForXp(20740)).toBe(15);
   expect(levelForXp(99_999)).toBe(15);
   expect(() => levelForXp(-1)).toThrow(/xp/);
 });

@@ -579,7 +579,12 @@ export function planCollect(world: World, command: { readonly instanceId?: strin
       writes.push(next);
     }
   }
-  const result: CollectResult = { coins, xp: 0, goods, collected, remaining, warehouseFull };
+  const xp = collected + ledger.filter(entry => entry.resource === "COINS").reduce((sum, entry) => sum + Math.round(entry.delta / 20), 0);
+  if (xp > 0) {
+    ledger.push({ resource: "XP", delta: xp, source: "collection" });
+    ledger.push(...levelRewardEntries(world.city.xp, world.city.xp + xp));
+  }
+  const result: CollectResult = { coins, xp, goods, collected, remaining, warehouseFull };
   const name = coins > 0 ? "coins_collected" : "goods_collected";
   return {
     ok: true,
@@ -781,7 +786,7 @@ function placeMessage(reason: string): string {
     case "INSUFFICIENT_COINS":
       return "Not enough coins";
     case "POP_CAP":
-      return "Population cap reached";
+      return "Build a civic building to grow";
     case "OUT_OF_BOUNDS":
       return "Placement is out of bounds";
     case "CHUNK_LOCKED":

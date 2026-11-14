@@ -17,6 +17,17 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   const [panel, setPanel] = useState<"catalog" | "warehouse" | "quests" | null>(null);
   const [undo, setUndo] = useState<string | null>(null);
   const [clock, setClock] = useState(Date.now());
+  const [levelUp, setLevelUp] = useState<{ level: number; unlocks: readonly string[] } | null>(null);
+  const previousLevel = useRef<number | null>(null);
+  useEffect(() => {
+    if (!snapshot) return;
+    const level = snapshot.city.level;
+    const previous = previousLevel.current;
+    if (previous !== null && level > previous) {
+      setLevelUp({ level, unlocks: LEVELS.filter(entry => entry.level > previous && entry.level <= level).flatMap(entry => entry.unlocks) });
+    }
+    previousLevel.current = level;
+  }, [snapshot]);
   const timeBase = useRef({ server: snapshot?.serverNow, received: Date.now() });
   if (timeBase.current.server !== snapshot?.serverNow) timeBase.current = { server: snapshot?.serverNow, received: Date.now() };
   const selectedId = useSceneStore(s => s.selectedId);
@@ -36,13 +47,16 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
     window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key);
   }, [ready, enqueue]);
   const quest = snapshot?.quests.find(q => q.status === "ACTIVE");
-  const xp = snapshot && LEVELS.find(l => l.level === snapshot.city.level)?.xpToNext;
+  const currentLevel = snapshot?.city.level ?? 1;
+  const priorXp = LEVELS.filter(l => l.level < currentLevel).reduce((sum, l) => sum + (l.xpToNext ?? 0), 0);
+  const xp = LEVELS.find(l => l.level === currentLevel)?.xpToNext;
   const serverClock = snapshot ? Date.parse(snapshot.serverNow) + (clock - timeBase.current.received) : clock;
   return <>
+    {levelUp && <div className="levelup-layer"><section className="levelup-card" role="dialog" aria-label="Level up" aria-live="polite"><h2>Level {levelUp.level}!</h2><p>Unlocked: {levelUp.unlocks.map(id => { const item = [...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].find(d => d.id === id); return item ? label(item.nameKey, id) : id; }).join(", ") || "No new items"}</p><button type="button" onClick={() => setLevelUp(null)}>Dismiss</button></section></div>}
     <section className="city-hud" aria-label="City status">
       <span>Level {snapshot?.city.level ?? "—"}</span>
-      <span data-testid="hud-xp">XP: {snapshot?.city.xp ?? 0} / {xp ?? "MAX"}</span>
-      {xp != null && <progress aria-label="XP progress" value={snapshot?.city.xp ?? 0} max={xp} />}
+      <span data-testid="hud-xp">XP: {Math.max(0, (snapshot?.city.xp ?? 0) - priorXp)} / {xp ?? "MAX"}</span>
+      {xp != null && <progress aria-label="XP progress" value={Math.max(0, (snapshot?.city.xp ?? 0) - priorXp)} max={xp} />}
       <span data-testid="hud-coins">Coins: {snapshot?.city.coins ?? 0}</span><span>Gems: {snapshot?.city.gems ?? 0}</span>
       <button type="button" onClick={() => setPanel("warehouse")}>Warehouse {snapshot ? `${total(snapshot)}/${snapshot.city.warehouseCap}` : "—"}</button>
       <button type="button" data-testid="quest-tracker-open" onClick={() => setPanel("quests")}>Quest: {quest ? label(QUESTS.find(q => q.id === quest.questId)?.nameKey ?? "", quest.questId) : "None"}</button>
@@ -69,7 +83,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       })}
     </section>}
     {panel === "catalog" && snapshot && <section className="city-panel" aria-label="Build catalog"><h2>Build catalog</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
-      {[...BUILDINGS.filter(b => !b.prebuilt), ...AGRICULTURE].map(d => {
+      {[...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].map(d => {
         const { locked, affordable, cost } = catalogAvailability(snapshot, d);
         return <div key={d.id} data-testid={`catalog-item-${d.id}`}><button type="button" disabled={locked || !affordable} onClick={() => { usePlacementStore.getState().select(d.id); setPanel(null); }}>{label(d.nameKey, d.id)} ({d.id}) — {cost} coins</button>{locked && <span data-testid={`catalog-lock-${d.id}`}> Locked: requires level {d.unlockLevel}</span>}{!locked && !affordable && <span> Not enough coins</span>}</div>;
       })}</section>}

@@ -8,12 +8,12 @@ export type LedgerWrite = {
   readonly refId?: string;
 };
 
-/** Placement XP is 1 for a free building and otherwise one tenth of the coins actually charged. */
+/** Placement XP uses the coins actually charged, with a minimum of five. */
 export function placementXp(coinsCharged: number): number {
   if (!Number.isInteger(coinsCharged) || coinsCharged < 0) {
     throw new Error("coins charged must be a non-negative integer");
   }
-  return Math.max(1, Math.round(coinsCharged / 10));
+  return Math.max(5, Math.round(coinsCharged / 25));
 }
 
 export function levelRewardEntries(beforeXp: number, afterXp: number): LedgerWrite[] {

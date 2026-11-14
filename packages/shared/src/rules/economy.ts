@@ -224,8 +224,10 @@ export function levelForXp(totalXp: number): number {
   if (!Number.isFinite(totalXp) || totalXp < 0) {
     throw new Error("xp must be a non-negative finite number");
   }
+  let threshold = 0;
   for (const entry of LEVELS) {
-    if (entry.xpToNext === null || totalXp < entry.xpToNext) {
+    if (entry.xpToNext !== null) threshold += entry.xpToNext;
+    if (entry.xpToNext === null || totalXp < threshold) {
       return entry.level;
     }
   }
