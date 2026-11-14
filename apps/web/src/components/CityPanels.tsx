@@ -55,7 +55,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
     {levelUp && <div className="levelup-layer"><section className="levelup-card" role="dialog" aria-label="Level up" aria-live="polite"><h2>Level {levelUp.level}!</h2><p>Unlocked: {levelUp.unlocks.map(id => { const item = [...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].find(d => d.id === id); return item ? label(item.nameKey, id) : id; }).join(", ") || "No new items"}</p><button type="button" onClick={() => setLevelUp(null)}>Dismiss</button></section></div>}
     <section className="city-hud" aria-label="City status">
       <span>Level {snapshot?.city.level ?? "—"}</span>
-      <span data-testid="hud-xp">XP: {Math.max(0, (snapshot?.city.xp ?? 0) - priorXp)} / {xp ?? "MAX"}</span>
+      <span data-testid="hud-xp">XP: {xp === null ? "MAX" : `${Math.max(0, (snapshot?.city.xp ?? 0) - priorXp)} / ${xp}`}</span>
       {xp != null && <progress aria-label="XP progress" value={Math.max(0, (snapshot?.city.xp ?? 0) - priorXp)} max={xp} />}
       <span data-testid="hud-coins">Coins: {snapshot?.city.coins ?? 0}</span><span>Gems: {snapshot?.city.gems ?? 0}</span>
       <button type="button" onClick={() => setPanel("warehouse")}>Warehouse {snapshot ? `${total(snapshot)}/${snapshot.city.warehouseCap}` : "—"}</button>

@@ -26,3 +26,15 @@ test("level 1 to 4 unlocks catalog items and displays a dismissible level-up car
     await expect(page.getByTestId(`catalog-lock-${id}`)).toHaveCount(0);
   }
 });
+
+test("the XP HUD displays MAX at level 15", async ({ page, request }) => {
+  const apiPort = process.env.NF_E2E_API_PORT ?? "3002";
+  const response = await request.post(`http://127.0.0.1:${apiPort}/v1/auth/session`, { data: {} });
+  const session = await response.json() as { token: string; cityId: string };
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL is required");
+  execFileSync("psql", [databaseUrl, "-v", "ON_ERROR_STOP=1", "-c", `update cities set level = 15, xp = 20000 where id = '${session.cityId}'`]);
+  await page.addInitScript(token => localStorage.setItem("nf_session_token", token), session.token);
+  await page.goto("/");
+  await expect(page.getByTestId("hud-xp")).toHaveText("XP: MAX");
+});

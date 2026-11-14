@@ -48,7 +48,7 @@ test("US-001 places the first cottage free and adds population once", async () =
   const placed = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 }, key);
   expect(placed.statusCode).toBe(200);
   const body = commandSuccessSchema.parse(placed.json());
-  expect(body.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 5, population: 8, populationCap: 50 });
+  expect(body.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 0, population: 8, populationCap: 50 });
   expect(body.cityVersion).toBe(2);
   const replay = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 }, key);
   expect(replay.statusCode).toBe(200);
@@ -58,7 +58,7 @@ test("US-001 places the first cottage free and adds population once", async () =
   expect(reused.statusCode).toBe(422);
   expect(apiErrorSchema.parse(reused.json()).error.code).toBe("IDEMPOTENCY_KEY_REUSED");
   const city = await cityRow(session.cityId);
-  expect(city).toMatchObject({ population: 8, coins: 750, xp: 5, version: 2 });
+  expect(city).toMatchObject({ population: 8, coins: 750, xp: 0, version: 2 });
   const cottages = await handle.pool.query<{ count: string }>(
     "select count(*)::text as count from building_instances where city_id = $1 and definition_id = 'B-001' and removed_at is null",
     [session.cityId],
@@ -68,7 +68,7 @@ test("US-001 places the first cottage free and adds population once", async () =
     "select count(*)::text as rows, coalesce(sum(delta), 0)::text as total from inventory_ledger where city_id = $1 and resource = 'XP'",
     [session.cityId],
   );
-  expect(xp.rows[0]).toEqual({ rows: "1", total: "5" });
+  expect(xp.rows[0]).toEqual({ rows: "0", total: "0" });
   await assertLedgerReconciled(session.cityId);
 });
 
@@ -885,9 +885,9 @@ test("completed tutorial quest can be claimed only once", async () => {
   expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
   const claim = await command(session, "claim-quest", { questId: "quest_tutorial_house", periodKey: "-" });
   expect(claim.statusCode).toBe(200);
-  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 15 });
+  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 10 });
   expect((await command(session, "claim-quest", { questId: "quest_tutorial_house", periodKey: "-" })).statusCode).not.toBe(200);
-  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 15 });
+  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 10 });
 });
 
 test.each([
@@ -1105,7 +1105,7 @@ test("the Town Square landmark is locked until level 15 and occupies one 4 by 4 
 test("placing a building grants XP and advances the level at the catalog threshold", async () => {
   const session = await guest();
   await handle.pool.query("update cities set xp = 45 where id = $1", [session.cityId]);
-  const placed = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 });
+  const placed = await command(session, "place-building", { definitionId: "AG-001", x: 0, y: 4, rotation: 0 });
   expect(placed.statusCode).toBe(200);
   expect(commandSuccessSchema.parse(placed.json()).result).toMatchObject({ xp: 5 });
   const city = await handle.pool.query<{ xp: string; level: number }>("select xp, level from cities where id = $1", [session.cityId]);
@@ -1117,4 +1117,47 @@ test("a second Town Hall can be purchased to increase the population cap", async
   const placed = await command(session, "place-building", { definitionId: "B-009", x: 0, y: 4, rotation: 0 });
   expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
   expect(await cityRow(session.cityId)).toMatchObject({ population_cap: 100 });
+});
+
+
+test.each(["B-009", "B-001", "D-001"])("repeated %s placement and removal cannot farm XP", async (definitionId) => {
+  const session = await guest();
+  await handle.pool.query("update cities set level = 4, xp = 390, coins = 10000 where id = $1", [session.cityId]);
+  let expectedCoins = 10000;
+  for (let i = 0; i < 20; i++) {
+    const placed = await command(session, "place-building", { definitionId, x: 0, y: 4, rotation: 0 });
+    expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+    const result = asRecord(commandSuccessSchema.parse(placed.json()).result);
+    const cost = Number(result.cost);
+    if (definitionId === "B-001") expect(cost).toBe(i === 0 ? 0 : 180);
+    else expect(cost).toBe(0);
+    expectedCoins -= cost;
+    const removed = await command(session, "remove-building", { instanceId: String(result.instanceId) });
+    expect(removed.statusCode, JSON.stringify(removed.json())).toBe(200);
+    expectedCoins += Math.floor(cost / 2);
+    const city = await cityRow(session.cityId);
+    expect(Number(city.xp)).toBe(390);
+    expect(Number(city.coins)).toBe(expectedCoins);
+  }
+});
+
+
+test("removal reverses paid placement XP and undo restores it without repeating level rewards", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set xp = 16495, level = 11, coins = 10000 where id = $1", [session.cityId]);
+  // Set XP just below the actual level 12 threshold.
+  const { LEVELS } = await import("@nf/shared");
+  const threshold = LEVELS.slice(0, 11).reduce((sum, level) => sum + (level.xpToNext ?? 0), 0);
+  await handle.pool.query("update cities set xp = $2 where id = $1", [session.cityId, threshold - 5]);
+  const placed = await command(session, "place-building", { definitionId: "AG-001", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode).toBe(200);
+  const id = String(asRecord(commandSuccessSchema.parse(placed.json()).result).instanceId);
+  const level = async () => (await handle.pool.query<{ level: number }>("select level from cities where id = $1", [session.cityId])).rows[0]?.level;
+  expect(await level()).toBe(12);
+  expect((await command(session, "remove-building", { instanceId: id })).statusCode).toBe(200);
+  expect(await level()).toBe(11);
+  expect((await command(session, "remove-building", { instanceId: id, undo: true })).statusCode).toBe(200);
+  expect(await level()).toBe(12);
+  const rewards = await handle.pool.query("select resource, delta from inventory_ledger where city_id = $1 and source = 'level_reward'", [session.cityId]);
+  expect(rewards.rows).toHaveLength(2);
 });

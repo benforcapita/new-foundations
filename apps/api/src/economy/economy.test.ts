@@ -24,10 +24,8 @@ test("the first cottage is free, instant, and adds eight residents once", () => 
   if (!placed.ok) {
     return;
   }
-  expect(placed.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 5, population: 8, populationCap: 50 });
-  expect(placed.ledger).toEqual([
-    expect.objectContaining({ resource: "XP", delta: 5, source: "building_placed" }),
-  ]);
+  expect(placed.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 0, population: 8, populationCap: 50 });
+  expect(placed.ledger).toEqual([]);
   expect(placed.cellReplaces[0]?.cells).toHaveLength(4);
   const again = planPlace(withBuilding(grassWorld(), placed.buildings[0]), { definitionId: "B-001", x: 16, y: 12, rotation: 0 }, { ...IDS, instanceId: "33333333-3333-4333-8333-333333333333" });
   expect(again.ok).toBe(true);

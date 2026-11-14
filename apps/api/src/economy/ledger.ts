@@ -13,7 +13,7 @@ export function placementXp(coinsCharged: number): number {
   if (!Number.isInteger(coinsCharged) || coinsCharged < 0) {
     throw new Error("coins charged must be a non-negative integer");
   }
-  return Math.max(5, Math.round(coinsCharged / 25));
+  return coinsCharged === 0 ? 0 : Math.max(5, Math.round(coinsCharged / 25));
 }
 
 export function levelRewardEntries(beforeXp: number, afterXp: number): LedgerWrite[] {
