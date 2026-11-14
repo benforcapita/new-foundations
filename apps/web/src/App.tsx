@@ -1,6 +1,8 @@
 import { useCityStore, visibleSnapshot } from "./api/store";
 import { APP_NAME } from "@nf/shared";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { BuildingList } from "./components/BuildingList";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { Boards } from "./components/Boards";
 import { CityPanels } from "./components/CityPanels";
 import { Tutorial } from "./components/Tutorial";
@@ -16,6 +18,10 @@ function bootOnce() {
 }
 
 export function App() {
+  const [panel, setPanel] = useState<"list" | "settings" | null>(null);
+  const [photo, setPhoto] = useState(false);
+  useEffect(() => { const key = (e: KeyboardEvent) => { const target = e.target as HTMLElement; if (e.key.toLowerCase() === "p" && !e.ctrlKey && !e.metaKey && !e.altKey && !target?.isContentEditable && !["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName)) setPhoto(v => !v); }; window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key); }, []);
+  useEffect(() => { useSceneStore.getState().publish({ photoMode: photo }); }, [photo]);
   const demo = import.meta.env.VITE_DEMO_MODE === "1" || new URLSearchParams(window.location.search).get("demo") === "1";
   const city = useCityStore();
   const snapshot = visibleSnapshot(city);
@@ -35,7 +41,7 @@ export function App() {
 
   return (
     <main className="app">
-      <header>
+      <div hidden={photo} className="hud-wrapper"><header>
         <h1>{APP_NAME}</h1>
         <p>{ready ? "Client ready" : "Starting client"}</p>
       </header>
@@ -43,7 +49,12 @@ export function App() {
       <CityPanels snapshot={snapshot} />
       {!demo && snapshot && <Tutorial snapshot={snapshot} />}
       {snapshot && <Boards snapshot={snapshot} />}
+      {snapshot && panel === "list" && <BuildingList snapshot={snapshot} close={() => setPanel(null)} />}
+      {snapshot && panel === "settings" && <SettingsPanel snapshot={snapshot} close={() => setPanel(null)} />}
       <div className="toolbar">
+        <button data-testid="photo-mode-button" onClick={() => setPhoto(true)}>Camera</button>
+        <button onClick={() => setPanel("list")}>Building List</button>
+        <button onClick={() => setPanel("settings")}>Settings</button>
         <button type="button" data-testid="place-cottage" onClick={() => selectBuilding("B-001")}>
           Place Cottage
         </button>
@@ -69,14 +80,17 @@ export function App() {
           </button>
         </form>
         {scene.districtList ? (
-          <button type="button" data-testid="district-list-hook">
+          <button type="button" data-testid="district-list-hook" onClick={() => setPanel("list")}>
             District Building List
           </button>
         ) : null}
       </div>
       {!demo && <div data-testid="sync-status" role="status">{city.queue.length ? `Pending Sync (${city.queue.length})` : "Synced"} {city.queue.length > 0 && <button type="button" disabled={city.flushing} onClick={() => void city.flush()}>Retry</button>}</div>}
       {city.error && <p role="alert">{city.error}</p>}
+      </div>
+      {photo && <div className="photo-controls"><button data-testid="photo-export" onClick={() => window.dispatchEvent(new Event("nf-photo-export"))}>Export PNG</button><button onClick={() => setPhoto(false)}>Exit Photo Mode</button></div>}
       {(demo || snapshot) && <GameCanvas key={demo ? "demo" : `${snapshot?.cityVersion}:${city.queue.map((item) => item.key).join(",")}`} />}
+      <div hidden={photo}>
       {snapshot && <ul data-testid="city-buildings">{snapshot.buildings.map((building) => <li key={building.id} data-testid="city-building">{building.definitionId} {building.x},{building.y}</li>)}</ul>}
       <Feedback />
       <section className="readout" data-testid="scene-readout" aria-live="polite">
@@ -118,6 +132,7 @@ export function App() {
           </li>
         ))}
       </ul>
+      </div>
     </main>
   );
 }

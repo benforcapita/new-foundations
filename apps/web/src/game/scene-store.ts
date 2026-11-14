@@ -44,6 +44,7 @@ export const IDLE_GHOST: GhostReadout = {
 };
 
 type SceneState = {
+  readonly photoMode: boolean;
   readonly ready: boolean;
   readonly zoom: number;
   readonly lod: LodMode;
@@ -66,6 +67,7 @@ type SceneState = {
 };
 
 export const useSceneStore = create<SceneState>((set) => ({
+  photoMode: false,
   ready: false,
   zoom: 1,
   lod: "detailed",
@@ -84,6 +86,7 @@ export const useSceneStore = create<SceneState>((set) => ({
   cropOffset: 0,
   aim: null,
   publish: (patch) => {
+    if (patch.photoMode === true) usePlacementStore.getState().cancel();
     set(patch);
   },
   aimAt: (x, y, zoom) => {
