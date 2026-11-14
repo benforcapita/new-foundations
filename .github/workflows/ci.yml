@@ -102,4 +102,4 @@ jobs:
         with:
           name: nf20-benchmark
           path: apps/web/test-results/**/nf20-benchmark.json
-          if-no-files-found: warn
+          if-no-files-found: error

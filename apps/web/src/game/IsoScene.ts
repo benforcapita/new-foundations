@@ -189,6 +189,9 @@ export class IsoScene extends Phaser.Scene {
   private ghostStamp: number | null = null;
   private readonly opaqueRows = new Map<string, number>();
   private cullKey = "";
+  private terrainChunks: { cx: number; cy: number; left: number; top: number; image: Phaser.GameObjects.RenderTexture | null }[] = [];
+  private frameStarted = 0;
+  private frameWork: number[] = [];
 
   constructor() {
     super("iso");
@@ -230,8 +233,9 @@ export class IsoScene extends Phaser.Scene {
     if (previousAim) { camera.setZoom(clampZoom(previousAim.zoom)); camera.centerOn(previousAim.x, previousAim.y); }
     else camera.centerOn(framed.x, framed.y);
     camera.roundPixels = true;
-    camera.disableCull = false;
+
     this.bindInput();
+    this.game.events.on(Phaser.Core.Events.PRE_STEP, this.onFrameStart);
     this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPaint);
     window.addEventListener("nf-fx", this.onFeedback);
     this.unsubscribe = usePlacementStore.subscribe(() => {
@@ -285,6 +289,7 @@ export class IsoScene extends Phaser.Scene {
     const top = camera.scrollY + camera.height / 2 - camera.height / (2 * camera.zoom) - margin;
     const right = left + camera.width / camera.zoom + 2 * margin;
     const bottom = top + camera.height / camera.zoom + 2 * margin;
+    this.updateTerrainChunks(left, top, right, bottom);
     for (const object of this.children.list) {
       if (!(object instanceof Phaser.GameObjects.Image || object instanceof Phaser.GameObjects.RenderTexture)) continue;
       if (object === this.ghostImage || object === this.ghostIcon) continue;
@@ -333,23 +338,32 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private drawTerrain(): void {
-    // Cache each static 12×12 diamond in a single render texture. Water stays
-    // separate so the existing reduced-motion-aware shimmer can animate it.
-    const chunkSize = 12;
-    for (let cy = 0; cy < (this.isBench() ? BENCH_SIZE : STARTER_MAP.height); cy += chunkSize) {
-      for (let cx = 0; cx < (this.isBench() ? BENCH_SIZE : STARTER_MAP.width); cx += chunkSize) {
-        const left = anchorScreen(cx, cy + chunkSize, 0, 0).x - 64;
-        const top = anchorScreen(cx, cy, 0, 0).y - 128;
-        const chunk = this.add.renderTexture(left, top, 1664, 1024).setOrigin(0).setDepth(GROUND_DEPTH);
-        for (let y = cy; y < Math.min(cy + chunkSize, this.isBench() ? BENCH_SIZE : STARTER_MAP.height); y += 1) {
-          for (let x = cx; x < Math.min(cx + chunkSize, this.isBench() ? BENCH_SIZE : STARTER_MAP.width); x += 1) {
-            const terrain = this.isBench() ? "grass" : STARTER_MAP.rows[y]?.[x];
-            if (terrain === undefined) continue;
-            const tile = placeAnchored(this, TERRAIN_ASSETS[terrain], x, y, 1, 1, GROUND_DEPTH);
-            if (terrain === "water") this.water.push(tile);
-            else { chunk.draw(tile, tile.x - left, tile.y - top); tile.destroy(); }
-          }
-        }
+    const size = this.isBench() ? BENCH_SIZE : STARTER_MAP.width;
+    for (let cy = 0; cy < size; cy += 12) {
+      for (let cx = 0; cx < size; cx += 12) {
+        this.terrainChunks.push({ cx, cy, left: anchorScreen(cx, cy + 12, 0, 0).x - 64, top: anchorScreen(cx, cy, 0, 0).y - 128, image: null });
+      }
+    }
+    if (!this.isBench()) {
+      for (let y = 0; y < STARTER_MAP.height; y++) for (let x = 0; x < STARTER_MAP.width; x++) {
+        if (STARTER_MAP.rows[y]?.[x] === "water") this.water.push(placeAnchored(this, TERRAIN_ASSETS.water, x, y, 1, 1, GROUND_DEPTH));
+      }
+    }
+  }
+
+  private updateTerrainChunks(left: number, top: number, right: number, bottom: number): void {
+    const size = this.isBench() ? BENCH_SIZE : STARTER_MAP.width;
+    for (const chunk of this.terrainChunks) {
+      const visible = chunk.left <= right && chunk.left + 1664 >= left && chunk.top <= bottom && chunk.top + 1024 >= top;
+      if (!visible) { chunk.image?.destroy(); chunk.image = null; continue; }
+      if (chunk.image) continue;
+      chunk.image = this.add.renderTexture(chunk.left, chunk.top, 1664, 1024).setOrigin(0).setDepth(GROUND_DEPTH);
+      for (let y = chunk.cy; y < Math.min(chunk.cy + 12, size); y++) for (let x = chunk.cx; x < Math.min(chunk.cx + 12, size); x++) {
+        const terrain = this.isBench() ? "grass" : STARTER_MAP.rows[y]?.[x];
+        if (terrain === undefined || terrain === "water") continue;
+        const tile = placeAnchored(this, TERRAIN_ASSETS[terrain], x, y, 1, 1, GROUND_DEPTH);
+        chunk.image.draw(tile, tile.x - chunk.left, tile.y - chunk.top);
+        tile.destroy();
       }
     }
   }
@@ -781,15 +795,20 @@ export class IsoScene extends Phaser.Scene {
     this.refreshGhost();
   };
 
+  private readonly onFrameStart = (): void => { this.frameStarted = performance.now(); };
+
   private readonly onPaint = (): void => {
+    if (this.isBench() && this.frameStarted) this.frameWork.push(performance.now() - this.frameStarted);
     const benchHost = this.game.canvas.parentElement;
-    if (this.isBench() && benchHost && !benchHost.dataset.benchStats) {
+    if (this.isBench() && benchHost) {
       benchHost.dataset.benchStats = JSON.stringify({
         buildings: this.buildingSprites.length,
         readyBadges: this.badges.length,
         visibleBuildings: this.buildingSprites.filter((entry) => (entry.image.cameraFilter & this.cameras.main.id) === 0).length,
         atlasBuildings: this.buildingSprites.filter((entry) => entry.image.texture.key === "nf-atlas").length,
-        terrainChunks: this.children.list.filter((entry) => entry instanceof Phaser.GameObjects.RenderTexture).length,
+        terrainChunks: this.terrainChunks.filter((chunk) => chunk.image !== null).length,
+        canvasBackingBytes: this.terrainChunks.reduce((sum, chunk) => sum + (chunk.image ? chunk.image.width * chunk.image.height * 4 : 0), 0) + this.textures.get("nf-atlas").getSourceImage().width * this.textures.get("nf-atlas").getSourceImage().height * 4 + this.game.canvas.width * this.game.canvas.height * 4,
+        frameWork: this.frameWork,
       });
     }
     if (new URLSearchParams(window.location.search).get("e2e") === "1" && this.game.canvas.parentElement) {
@@ -1082,6 +1101,7 @@ export class IsoScene extends Phaser.Scene {
     }
     window.removeEventListener("nf-fx", this.onFeedback);
     window.removeEventListener("keydown", this.onKeyDown);
+    this.game.events.off(Phaser.Core.Events.PRE_STEP, this.onFrameStart);
     this.game.events.off(Phaser.Core.Events.POST_RENDER, this.onPaint);
     window.matchMedia("(prefers-reduced-motion: reduce)").removeEventListener("change", this.onMotion);
     useSceneStore.getState().publish({ ready: false });
