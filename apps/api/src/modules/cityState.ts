@@ -272,7 +272,7 @@ function toWorldJob(row: typeof productionJobs.$inferSelect): WorldJob {
 
 function toWorldQuest(row: typeof quests.$inferSelect): WorldQuest {
   const status = row.status === "COMPLETED" || row.status === "CLAIMED" || row.status === "ACTIVE" ? row.status : "ACTIVE";
-  return { questId: row.questId, status, stepState: row.stepState };
+  return { questId: row.questId, status, stepIndex: row.stepIndex, stepState: row.stepState };
 }
 
 function toPresentedBuilding(row: typeof buildingInstances.$inferSelect): PresentedBuilding {

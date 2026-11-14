@@ -190,8 +190,11 @@ async function claimQuest(ctx: CommandContext, cityId: string, body: unknown): P
   const definition = QUESTS.find(q => q.id === command.questId);
   const [quest] = await ctx.tx.select().from(quests).where(and(eq(quests.cityId, cityId), eq(quests.questId, command.questId), eq(quests.periodKey, command.periodKey)));
   if (!definition || !quest || quest.status !== "COMPLETED") throw new ApiError(409, "STATE_CHANGED", "Quest is not available to claim");
+  let removedRewardDecoration = false;
   if (definition.reward.decorationId) {
     const world = await loadWorld(ctx.tx, cityId, ctx.now);
+    removedRewardDecoration = world.buildings.some(b => b.definitionId === definition.reward.decorationId && b.removedAt !== null)
+      && !world.buildings.some(b => b.definitionId === definition.reward.decorationId && b.removedAt === null);
     if (!world.buildings.some(b => b.definitionId === definition.reward.decorationId)) {
       let placed = false;
       for (const cell of world.cells) {
@@ -209,5 +212,6 @@ async function claimQuest(ctx: CommandContext, cityId: string, body: unknown): P
     { resource: "XP", delta: definition.reward.xp, source: "quest_claimed" },
     ...levelRewardEntries(Number(city.xp), Number(city.xp) + definition.reward.xp),
   ].filter(entry => entry.delta !== 0);
-  return { ledger, result: { questId: definition.id, reward: definition.reward } };
+  const reward = removedRewardDecoration ? { coins: definition.reward.coins, xp: definition.reward.xp } : definition.reward;
+  return { ledger, result: { questId: definition.id, reward } };
 }

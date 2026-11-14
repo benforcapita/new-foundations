@@ -936,7 +936,67 @@ test("Flower Street unlocks the bench for its final step and does not grant it t
   expect((await command(session, "place-building", { definitionId: "D-003", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
   const quest = await handle.pool.query<{ status: string }>("select status from quests where city_id = $1 and quest_id = 'quest_flower_street'", [session.cityId]);
   expect(quest.rows[0]?.status).toBe("COMPLETED");
+  const second = () => command(session, "place-building", { definitionId: "D-003", x: 1, y: 4, rotation: 0 });
+  const completedAttempt = await second();
+  expect(completedAttempt.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(completedAttempt.json()).error.code).toBe("LOCKED_BY_LEVEL");
   expect((await command(session, "claim-quest", { questId: "quest_flower_street", periodKey: "-" })).statusCode).toBe(200);
+  const claimedAttempt = await second();
+  expect(claimedAttempt.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(claimedAttempt.json()).error.code).toBe("LOCKED_BY_LEVEL");
   const benches = await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'D-003' and removed_at is null", [session.cityId]);
   expect(benches.rowCount).toBe(1);
+});
+
+
+test("Flower Street bench requires every prior step even when the current index is 6", async () => {
+  const session = await guest();
+  await handle.pool.query(`insert into quests (city_id, quest_id, period_key, track, status, step_index, step_state, started_at, version)
+    values ($1, 'quest_flower_street', '-', 'story', 'ACTIVE', 6, '{"0":1,"1":3,"2":2,"3":1,"4":1,"5":1,"6":0}', now(), 1)`, [session.cityId]);
+  const result = await command(session, "place-building", { definitionId: "D-003", x: 0, y: 4, rotation: 0 });
+  expect(result.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(result.json()).error.code).toBe("LOCKED_BY_LEVEL");
+});
+
+test("real goods collections advance Early Bakery and Flower Street by quantity", async () => {
+  const session = await guest();
+  const place = async (definitionId: string, x: number, y: number) => {
+    const response = await command(session, "place-building", { definitionId, x, y, rotation: 0 });
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(200);
+    return readString(asRecord(commandSuccessSchema.parse(response.json()).result).instanceId);
+  };
+  const progress = async (id: string) => (await handle.pool.query<{ step_index: number; step_state: Record<string, number> }>("select step_index, step_state from quests where city_id = $1 and quest_id = $2", [session.cityId, id])).rows[0];
+  await place("B-001", 0, 4);
+  const buildings = await handle.pool.query<{ id: string; definition_id: string }>("select id, definition_id from building_instances where city_id = $1 and ((definition_id = 'AG-001' and x = 0 and y = 0) or definition_id = 'B-004')", [session.cityId]);
+  const wheat = readString(buildings.rows.find(b => b.definition_id === "AG-001")?.id);
+  const grocery = readString(buildings.rows.find(b => b.definition_id === "B-004")?.id);
+  expect((await command(session, "collect", { instanceId: wheat })).statusCode).toBe(200);
+  expect((await command(session, "supply-business", { instanceId: grocery })).statusCode).toBe(200);
+  const bakery = await place("B-007", 2, 4);
+  expect(await progress("quest_early_bakery_01")).toMatchObject({ step_index: 1, step_state: { "1": 0 } });
+  expect((await command(session, "start-production", { instanceId: bakery, recipeId: "RCP-BREAD" })).statusCode).toBe(200);
+  advance(360_000);
+  const bread = await command(session, "collect", { instanceId: bakery });
+  expect(bread.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(bread.json()).result).toMatchObject({ goods: { GOOD_BREAD: 3 } });
+  expect(await progress("quest_early_bakery_01")).toMatchObject({ step_index: 2, step_state: { "1": 3 } });
+  await place("B-001", 0, 8);
+  expect(await progress("quest_flower_street")).toMatchObject({ step_index: 1, step_state: { "1": 0 } });
+  const harvested = await command(session, "collect", { instanceId: wheat });
+  expect(harvested.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(harvested.json()).result).toMatchObject({ goods: { GOOD_WHEAT: 3 } });
+  expect(await progress("quest_flower_street")).toMatchObject({ step_index: 2, step_state: { "1": 3 } });
+});
+
+test("claim does not report a removed quest bench as a new reward", async () => {
+  const session = await guest();
+  await handle.pool.query(`insert into quests (city_id, quest_id, period_key, track, status, step_index, step_state, started_at, version)
+    values ($1, 'quest_flower_street', '-', 'story', 'ACTIVE', 6, '{"0":1,"1":3,"2":3,"3":1,"4":1,"5":1,"6":0}', now(), 1)`, [session.cityId]);
+  const placed = await command(session, "place-building", { definitionId: "D-003", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode).toBe(200);
+  const instanceId = readString(asRecord(commandSuccessSchema.parse(placed.json()).result).instanceId);
+  expect((await command(session, "remove-building", { instanceId })).statusCode).toBe(200);
+  const claim = await command(session, "claim-quest", { questId: "quest_flower_street", periodKey: "-" });
+  expect(claim.statusCode).toBe(200);
+  expect(asRecord(asRecord(commandSuccessSchema.parse(claim.json()).result).reward)).toEqual({ coins: 300, xp: 60 });
 });

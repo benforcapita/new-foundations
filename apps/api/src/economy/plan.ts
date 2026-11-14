@@ -78,7 +78,12 @@ export function planPlace(
   const charged = chargedCoins(placeable, owned);
   const seconds = buildSeconds(placeable, owned);
   const flower = world.quests.find(q => q.questId === "quest_flower_street");
-  const benchUnlocked = command.definitionId === "D-003" && flower !== undefined && (flower.status !== "ACTIVE" || Object.entries(flower.stepState).filter(([key]) => Number(key) < 6).every(([key, value]) => value >= (QUESTS.find(q => q.id === "quest_flower_street")?.steps[Number(key)]?.amount ?? Infinity)) && Object.keys(flower.stepState).length >= 7);
+  const flowerDefinition = QUESTS.find(q => q.id === "quest_flower_street");
+  const benchUnlocked = command.definitionId === "D-003" && flower?.status === "ACTIVE" && flower.stepIndex === 6
+    && (flower.stepState["6"] ?? 0) === 0
+    && flowerDefinition !== undefined
+    && flowerDefinition.steps.slice(0, 6).every((step, index) => (flower.stepState[String(index)] ?? 0) >= step.amount)
+    && !world.buildings.some(building => building.definitionId === "D-003");
   const verdict = canPlace(placementCity(world), benchUnlocked ? { ...placeable.placeable, unlockLevel: 1 } : placeable.placeable, command.x, command.y, command.rotation);
   if (!verdict.ok) {
     const reason = verdict.reasons[0];
