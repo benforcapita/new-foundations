@@ -1,4 +1,4 @@
-import { canPlaceFlowerBench, catalogAvailability, hasReady } from "./cityPanelState";
+import { canPlaceFlowerBench, catalogAvailability, hasReady, canCancelProduction } from "./cityPanelState";
 import { useEffect, useRef, useState } from "react";
 import { AGRICULTURE, BUILDINGS, DECORATIONS, ROAD, LEVELS, QUESTS, RECIPES, canPlace, loadEnglishLocalization } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
@@ -98,7 +98,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       {"stockInput" in definition && <p>Inputs: {definition.stockInput.map(i => `${i.goodId} ${i.qty} (stored ${snapshot.inventory[i.goodId] ?? 0})`).join(", ")}</p>}
       {"outputGoodId" in definition && <p>Output: {definition.outputQty} {definition.outputGoodId}</p>}
       {"category" in definition && definition.category === "production" && <div data-testid="production-queue"><h3>Production queue</h3><p>Slots: {snapshot.jobs.filter(j => j.buildingId === building.id).length}/{snapshot.city.level >= 5 ? 3 : 2}</p>
-        {snapshot.jobs.filter(j => j.buildingId === building.id).map(j => <p key={j.id}>Slot {j.slot + 1}: {j.recipeId} — {Math.max(0, Math.ceil((Date.parse(j.completesAt) - serverClock) / 1000))}s <button type="button" data-testid="cancel-production" disabled={j.id.startsWith("pending:")} onClick={() => enqueue({ key: crypto.randomUUID(), name: "cancel-production", body: { instanceId: building.id, jobId: j.id } })}>Cancel</button></p>)}
+        {snapshot.jobs.filter(j => j.buildingId === building.id).map(j => <p key={j.id}>Slot {j.slot + 1}: {j.recipeId} — {Math.max(0, Math.ceil((Date.parse(j.completesAt) - serverClock) / 1000))}s <button type="button" data-testid="cancel-production" disabled={!canCancelProduction(j, serverClock)} onClick={() => enqueue({ key: crypto.randomUUID(), name: "cancel-production", body: { instanceId: building.id, jobId: j.id } })}>Cancel</button></p>)}
         {RECIPES.filter(r => r.buildingId === definition.id).map(r => <p key={r.id}>{label(r.nameKey, r.id)}: {r.inputs.map(i => `${i.qty} ${i.goodId}`).join(", ")} → {r.outputs.map(i => `${i.qty} ${i.goodId}`).join(", ")} <button type="button" data-testid="start-production" disabled={snapshot.city.level < r.unlockLevel || snapshot.jobs.filter(j => j.buildingId === building.id).length >= (snapshot.city.level >= 5 ? 3 : 2) || r.inputs.some(i => (snapshot.inventory[i.goodId] ?? 0) < i.qty)} onClick={() => enqueue({ key: crypto.randomUUID(), name: "start-production", body: { instanceId: building.id, recipeId: r.id } })}>Start</button></p>)}
       </div>}
     </section>}

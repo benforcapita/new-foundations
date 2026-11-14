@@ -12,3 +12,7 @@ export function catalogAvailability(snapshot: Snapshot, definition: typeof BUILD
   const free = "firstFree" in definition && definition.firstFree && (snapshot.city.placedCounts?.[definition.id] ?? 0) === 0;
   return { locked: snapshot.city.level < definition.unlockLevel, affordable: free || snapshot.city.coins >= definition.cost.coins, cost: free ? 0 : definition.cost.coins };
 }
+
+export function canCancelProduction(job: { id: string; completesAt: string }, now: number): boolean {
+  return !job.id.startsWith("pending:") && Date.parse(job.completesAt) > now;
+}

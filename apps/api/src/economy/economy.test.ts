@@ -171,6 +171,9 @@ test("production queues two slots, cancels with a refund, and shifts the rest", 
   const both = [firstJob, secondJob];
   const shifted = shiftQueue(both, firstJob.id, NOW + 1_000);
   expect(shifted[0]).toMatchObject({ id: secondJob.id, slot: 0, startedAt: NOW + 1_000 });
+  for (const now of [firstJob.completesAt, firstJob.completesAt + 1]) {
+    expect(planCancelProduction({ ...withJobs(queued, both), now }, { instanceId: "bakery", jobId: firstJob.id })).toMatchObject({ ok: false, code: "PRODUCTION_FINISHED" });
+  }
   const cancelled = planCancelProduction(withJobs(queued, both), { instanceId: "bakery", jobId: firstJob.id });
   expect(cancelled.ok).toBe(true);
   if (!cancelled.ok) {
