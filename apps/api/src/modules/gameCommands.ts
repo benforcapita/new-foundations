@@ -1,8 +1,9 @@
+import { BUILDING_UPGRADE, goodById } from "@nf/shared/content";
 import { orderCommand } from "./orders";
 import { and, eq } from "drizzle-orm";
-import { QUESTS } from "@nf/shared";
+import { QUESTS, warehouseCapacity, warehouseUpgradeCost } from "@nf/shared";
 import { levelRewardEntries } from "../economy/ledger";
-import { cities, cityCells, quests } from "../db/schema";
+import { buildingInstances, cities, cityCells, quests } from "../db/schema";
 import { planExpansion } from "../economy/expansion";
 import { randomUUID } from "node:crypto";
 import { commandBodySchemas, placeBuildingCommandSchema } from "@nf/shared/schemas";
@@ -35,6 +36,9 @@ const CITY_COMMANDS = [
   "fulfill-order",
   "reroll-order",
   "claim-quest",
+  "upgrade-warehouse",
+  "upgrade-building",
+  "set-collect-priority",
 ] as const;
 
 export type CityCommandName = (typeof CITY_COMMANDS)[number];
@@ -52,6 +56,11 @@ export function assertCityCommand(name: string): CityCommandName {
 
 export function assertCityCommandBody(name: CityCommandName, body: unknown): void {
   switch (name) {
+    case "upgrade-building":
+    case "upgrade-warehouse":
+    case "set-collect-priority":
+      parseCommand(commandBodySchemas[name], body);
+      return;
     case "claim-quest":
       parseCommand(commandBodySchemas["claim-quest"], body);
       return;
@@ -94,6 +103,8 @@ export function assertCityCommandBody(name: CityCommandName, body: unknown): voi
 }
 
 export async function runCityCommand(ctx: CommandContext, cityId: string, name: CityCommandName, body: unknown): Promise<CommandEffects> {
+  if (name === "upgrade-building") return upgradeBuilding(ctx, cityId, body);
+  if (name === "upgrade-warehouse" || name === "set-collect-priority") return warehouseCommand(ctx, cityId, name, body);
   if (name === "claim-quest") return claimQuest(ctx, cityId, body);
   if (name === "expand-land") return expandLand(ctx, cityId, body);
   if (name === "fulfill-order" || name === "reroll-order") return orderCommand(ctx, cityId, name, parseCommand(commandBodySchemas[name], body).orderId);
@@ -117,7 +128,7 @@ export async function runCityCommand(ctx: CommandContext, cityId: string, name: 
   };
 }
 
-export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order" | "claim-quest">, body: unknown): Plan {
+export function planCityCommand(world: World, name: Exclude<CityCommandName, "expand-land" | "fulfill-order" | "reroll-order" | "claim-quest" | "upgrade-warehouse" | "upgrade-building" | "set-collect-priority">, body: unknown): Plan {
   const ids = { instanceId: randomUUID(), jobId: randomUUID(), undoToken: randomUUID() };
   switch (name) {
     case "place-building":
@@ -214,4 +225,39 @@ async function claimQuest(ctx: CommandContext, cityId: string, body: unknown): P
   ].filter(entry => entry.delta !== 0);
   const reward = removedRewardDecoration ? { coins: definition.reward.coins, xp: definition.reward.xp } : definition.reward;
   return { ledger, result: { questId: definition.id, reward } };
+}
+
+async function warehouseCommand(ctx: CommandContext, cityId: string, name: "upgrade-warehouse" | "set-collect-priority", body: unknown): Promise<CommandEffects> {
+  if (name === "set-collect-priority") {
+    const { priority } = parseCommand(commandBodySchemas[name], body);
+    await ctx.tx.update(cities).set({ collectPriority: priority }).where(eq(cities.id, cityId));
+    return { ledger: [], result: { priority } };
+  }
+  parseCommand(commandBodySchemas[name], body);
+  const [city] = await ctx.tx.select().from(cities).where(eq(cities.id, cityId));
+  if (!city) throw new ApiError(404, "NOT_FOUND", "City not found");
+  if (city.warehouseTier >= 5) throw new ApiError(422, "VALIDATION", "Warehouse is at maximum tier");
+  const tier = city.warehouseTier + 1;
+  const cost = warehouseUpgradeCost(tier);
+  const world = await loadWorld(ctx.tx, cityId, ctx.now);
+  if (Number(city.coins) < cost.coins || (world.balances.GOOD_PLANKS ?? 0) < cost.planks) throw new ApiError(409, "INSUFFICIENT_GOODS", "Not enough resources");
+  const cap = warehouseCapacity(tier);
+  await ctx.tx.update(cities).set({ warehouseTier: tier, warehouseCap: cap }).where(eq(cities.id, cityId));
+  return { ledger: [{ resource: "COINS", delta: -cost.coins, source: "warehouse_upgrade" }, ...(cost.planks ? [{ resource: "GOOD_PLANKS", delta: -cost.planks, source: "warehouse_upgrade" }] : [])], result: { tier, cap, cost } };
+}
+
+async function upgradeBuilding(ctx: CommandContext, cityId: string, body: unknown): Promise<CommandEffects> {
+  const { instanceId } = parseCommand(commandBodySchemas["upgrade-building"], body);
+  const world = await loadWorld(ctx.tx, cityId, ctx.now);
+  const building = world.buildings.find(b => b.id === instanceId && b.removedAt === null);
+  if (!building) throw new ApiError(404, "NOT_FOUND", "Building not found");
+  const placeable = findPlaceable(building.definitionId);
+  if (!placeable || placeable.kind !== "building" || building.level >= 3 || !(["ACTIVE", "NEEDS_SUPPLY"].includes(building.state)) || building.outputReady || building.cycleStartedAt !== null || building.stock.pendingCoins > 0 || world.jobs.some(j => j.buildingId === instanceId && j.cancelledAt === null && j.movedToOutputAt === null)) throw new ApiError(409, "STATE_CHANGED", "Building cannot be upgraded now");
+  const coins = Math.floor(placeable.definition.cost.coins * BUILDING_UPGRADE.coinFactor * building.level);
+  const material = world.city.level >= goodById("GOOD_PAINT").unlockLevel ? "GOOD_PAINT" : "GOOD_PLANKS";
+  const qty = building.level === 2 ? BUILDING_UPGRADE.finalMaterialQuantity : 0;
+  if (world.city.coins < coins || (world.balances[material] ?? 0) < qty) throw new ApiError(409, "INSUFFICIENT_GOODS", "Not enough resources");
+  const completesAt = new Date(ctx.now.getTime() + placeable.definition.buildSeconds * building.level * 1000);
+  await ctx.tx.update(buildingInstances).set({ state: "UPGRADING", upgradeCompletesAt: completesAt, version: ctx.versionAfter }).where(eq(buildingInstances.id, instanceId));
+  return { ledger: [...(coins ? [{ resource: "COINS", delta: -coins, source: "building_upgrade" }] : []), ...(qty ? [{ resource: material, delta: -qty, source: "building_upgrade" }] : [])], result: { instanceId, completesAt: completesAt.toISOString() } };
 }

@@ -15,6 +15,7 @@ function feedback() {
 }
 export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   const [panel, setPanel] = useState<"catalog" | "warehouse" | "quests" | null>(null);
+  const [warehouseFull, setWarehouseFull] = useState<{ collected: number; remaining: number } | null>(null);
   const [undo, setUndo] = useState<string | null>(null);
   const [clock, setClock] = useState(Date.now());
   const [levelUp, setLevelUp] = useState<{ level: number; unlocks: readonly string[] } | null>(null);
@@ -36,6 +37,10 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   const modifiers = building && snapshot ? liveBusinessModifiers(building, snapshot.buildings) : null;
   const ready = hasReady(snapshot);
   const enqueue = useCityStore(s => s.enqueue);
+  useEffect(() => {
+    const show = (event: Event) => { const result = (event as CustomEvent<{ collected: number; remaining: number }>).detail; setWarehouseFull(result); };
+    window.addEventListener("nf-warehouse-full", show); return () => window.removeEventListener("nf-warehouse-full", show);
+  }, []);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer); }, []);
   useEffect(() => { if (!undo) return; const timer = setTimeout(() => setUndo(null), 10000); return () => clearTimeout(timer); }, [undo]);
   useEffect(() => {
@@ -53,6 +58,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   const xp = LEVELS.find(l => l.level === currentLevel)?.xpToNext;
   const serverClock = snapshot ? Date.parse(snapshot.serverNow) + (clock - timeBase.current.received) : clock;
   return <>
+    {warehouseFull && <div role="status">{warehouseFull.collected} of {warehouseFull.collected + warehouseFull.remaining} collected — {label("ui.warehouse_full", "Warehouse Full")} <button type="button" onClick={() => setWarehouseFull(null)}>Dismiss</button></div>}
     {levelUp && <div className="levelup-layer"><section className="levelup-card" role="dialog" aria-label="Level up" aria-live="polite"><h2>Level {levelUp.level}!</h2><p>Unlocked: {levelUp.unlocks.map(id => { const item = [...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].find(d => d.id === id); return item ? label(item.nameKey, id) : id; }).join(", ") || "No new items"}</p><button type="button" onClick={() => setLevelUp(null)}>Dismiss</button></section></div>}
     <section className="city-hud" aria-label="City status">
       <span>Level {snapshot?.city.level ?? "—"}</span>
@@ -88,10 +94,11 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
         const { locked, affordable, cost } = catalogAvailability(snapshot, d);
         return <div key={d.id} data-testid={`catalog-item-${d.id}`}><button type="button" disabled={locked || !affordable} onClick={() => { usePlacementStore.getState().select(d.id); setPanel(null); }}>{label(d.nameKey, d.id)} ({d.id}) — {cost} coins</button>{locked && <span data-testid={`catalog-lock-${d.id}`}> Locked: requires level {d.unlockLevel}</span>}{!locked && !affordable && <span> Not enough coins</span>}</div>;
       })}</section>}
-    {panel === "warehouse" && snapshot && <section className="city-panel" data-testid="warehouse-panel"><h2>Warehouse</h2><button type="button" onClick={() => setPanel(null)}>Close</button><p data-testid="warehouse-cap">{total(snapshot)}/{snapshot.city.warehouseCap}</p><ul>{Object.entries(snapshot.inventory).map(([id, count]) => <li key={id}>{id}: {count}</li>)}</ul></section>}
+    {panel === "warehouse" && snapshot && <section className="city-panel" data-testid="warehouse-panel"><h2>Warehouse</h2><button type="button" onClick={() => setPanel(null)}>Close</button><p data-testid="warehouse-cap">{total(snapshot)}/{snapshot.city.warehouseCap}</p><label>Collect priority <select value={snapshot.city.collectPriority} onChange={e => enqueue({ key: crypto.randomUUID(), name: "set-collect-priority", body: { priority: e.target.value as "QUEST_FIRST" | "OLDEST_FIRST" } })}><option value="QUEST_FIRST">Quest First</option><option value="OLDEST_FIRST">Oldest First</option></select></label><button type="button" disabled={snapshot.city.warehouseTier >= 5} onClick={() => enqueue({ key: crypto.randomUUID(), name: "upgrade-warehouse", body: {} })}>Upgrade warehouse</button><ul>{Object.entries(snapshot.inventory).map(([id, count]) => <li key={id}>{id}: {count}</li>)}</ul></section>}
     {building && definition && snapshot && <section className="city-panel" data-testid="building-details"><h2>{label(definition.nameKey, definition.id)} ({definition.id})</h2><p>State: {building.state}</p><button type="button" onClick={() => useSceneStore.getState().publish({ selectedId: null })}>Close</button>
       {!DECORATIONS.some(d => d.id === definition.id) && <button type="button" data-testid="details-move" onClick={() => { usePlacementStore.getState().select(definition.id as Parameters<ReturnType<typeof usePlacementStore.getState>["select"]>[0]); useSceneStore.getState().publish({ moveId: building.id, selectedId: null }); }}>Move</button>}
       <button type="button" data-testid="details-remove" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "remove-building", body: { instanceId: building.id } }); setUndo(building.id); useSceneStore.getState().publish({ selectedId: null }); }}>Remove</button>
+      {BUILDINGS.some(d => d.id === building.definitionId) && <button type="button" disabled={building.level >= 3 || !["ACTIVE", "NEEDS_SUPPLY"].includes(building.state)} onClick={() => enqueue({ key: crypto.randomUUID(), name: "upgrade-building", body: { instanceId: building.id } })}>Upgrade building</button>}
       {building.state === "NEEDS_SUPPLY" && <button type="button" data-testid="details-supply" onClick={() => enqueue({ key: crypto.randomUUID(), name: "supply-business", body: { instanceId: building.id } })}>Supply</button>}
       {(building.state === "READY_TO_COLLECT" || (building.definitionId === "B-004" && building.state === "ACTIVE")) && <button type="button" data-testid="details-collect" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.id } }); feedback(); }}>Collect</button>}
       {modifiers && <div data-testid="boost-breakdown"><p>Decoration boost: +{Math.round(modifiers.decorationBoost * 100)}%</p><p>Road bonus: +{Math.round(modifiers.roadBonus * 100)}%</p><p>Reward: {modifiers.reward} coins per cycle</p></div>}

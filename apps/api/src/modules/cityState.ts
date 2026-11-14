@@ -13,7 +13,7 @@ import {
 } from "../economy/catalog";
 import type { Plan } from "../economy/plan";
 import { buildingLevel, resolveTimers } from "../economy/timers";
-import type { World, WorldBuilding, WorldCell, WorldJob, WorldQuest } from "../economy/model";
+import { projectPopulation, type World, type WorldBuilding, type WorldCell, type WorldJob, type WorldQuest } from "../economy/model";
 import type { Database } from "../db/client";
 import { buildingCells, buildingInstances, cities, cityCells, franchises, inventoryBalances, orderInstances, productionJobs, quests } from "../db/schema";
 import { ApiError } from "../errors";
@@ -28,7 +28,7 @@ import {
 
 type CommandTx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
-export async function resolveStoredTimers(tx: CommandTx, cityId: string, now: Date, version: number): Promise<void> {
+export async function resolveStoredTimers(tx: CommandTx, cityId: string, now: Date, version: number): Promise<{ population: number; populationCap: number } | undefined> {
   const world = await loadWorld(tx, cityId, now);
   const changes = resolveTimers(world);
   if (changes.buildings.length === 0 && changes.jobs.length === 0) {
@@ -36,6 +36,11 @@ export async function resolveStoredTimers(tx: CommandTx, cityId: string, now: Da
   }
   await writeBuildings(tx, cityId, changes.buildings, [], version);
   await writeJobs(tx, cityId, changes.jobs, version);
+  if (changes.buildings.some(b => world.buildings.find(previous => previous.id === b.id)?.state === "UPGRADING" && b.state !== "UPGRADING")) {
+    const changed = new Map(changes.buildings.map(b => [b.id, b]));
+    return projectPopulation(world.buildings.map(b => changed.get(b.id) ?? b));
+  }
+  return undefined;
 }
 
 export async function applyPlan(tx: CommandTx, cityId: string, plan: Extract<Plan, { ok: true }>, version: number): Promise<void> {
@@ -62,6 +67,7 @@ export async function loadWorld(tx: CommandTx, cityId: string, now: Date): Promi
   const balances = await tx.select().from(inventoryBalances).where(eq(inventoryBalances.cityId, cityId));
   const jobs = await tx.select().from(productionJobs).where(eq(productionJobs.cityId, cityId));
   const questRows = await tx.select().from(quests).where(eq(quests.cityId, cityId));
+  const orders = await tx.select().from(orderInstances).where(and(eq(orderInstances.cityId, cityId), eq(orderInstances.status, "OPEN")));
   const occupant = new Map(occupied.map((cell) => [`${cell.x},${cell.y}`, cell.buildingId]));
   let width = 0;
   let height = 0;
@@ -105,6 +111,7 @@ export async function loadWorld(tx: CommandTx, cityId: string, now: Date): Promi
     jobs: jobs.map(toWorldJob),
     balances: balanceMap,
     quests: questRows.map(toWorldQuest),
+    orderGoods: orders.flatMap(order => order.requirements.map(item => item.goodId)),
   };
 }
 
@@ -226,6 +233,7 @@ function buildingValues(cityId: string, building: WorldBuilding, version: number
     state: building.state,
     level: building.level,
     constructionCompletesAt: millisDate(building.constructionCompletesAt),
+    upgradeCompletesAt: millisDate(building.upgradeCompletesAt ?? null),
     cycleStartedAt: millisDate(building.cycleStartedAt),
     lastCollectedAt: millisDate(building.lastCollectedAt),
     stock: serializeStock(building.stock),
@@ -246,6 +254,7 @@ function toWorldBuilding(row: typeof buildingInstances.$inferSelect): WorldBuild
     rotation: rotationOf(row.rotation),
     state: stateOf(row.state),
     constructionCompletesAt: millis(row.constructionCompletesAt),
+    upgradeCompletesAt: millis(row.upgradeCompletesAt),
     cycleStartedAt: millis(row.cycleStartedAt),
     lastCollectedAt: millis(row.lastCollectedAt),
     stock: parseStock(row.stock),

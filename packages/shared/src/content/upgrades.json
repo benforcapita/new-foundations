@@ -1,0 +1,4 @@
+{
+  "building": { "coinFactor": 0.8, "finalMaterialQuantity": 2 },
+  "warehouse": { "baseCapacity": 40, "capacityPerTier": 20, "baseCoinCost": 400, "planksPerTier": 2 }
+}

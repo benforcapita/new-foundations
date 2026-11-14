@@ -19,6 +19,7 @@ export function resolveTimers(world: World): TimerChanges {
     if (building.removedAt !== null) {
       continue;
     }
+    if (settleUpgrade(building, world.now)) dirtyBuildings.add(building.id);
     if (settleConstruction(building, world.now)) {
       dirtyBuildings.add(building.id);
     }
@@ -77,7 +78,7 @@ export function rentDue(building: WorldBuilding, nowMs: number): { readonly coin
     placeable.kind !== "building" ||
     placeable.definition.category !== "residential" ||
     building.removedAt !== null ||
-    building.state === "UNDER_CONSTRUCTION" ||
+    (building.state === "UNDER_CONSTRUCTION" || building.state === "UPGRADING") ||
     building.lastCollectedAt === null
   ) {
     return { coins: 0, nextCollectedAt: building.lastCollectedAt ?? nowMs };
@@ -132,7 +133,7 @@ function settleAgriculture(building: WorldBuilding, now: number): boolean {
     state: WorldBuilding["state"];
     outputReady: WorldBuilding["outputReady"];
   };
-  mutable.outputReady = { goodId: placeable.definition.outputGoodId, qty: placeable.definition.outputQty };
+  mutable.outputReady = { goodId: placeable.definition.outputGoodId, qty: placeable.definition.outputQty, readyAt: building.constructionCompletesAt };
   mutable.state = transitionToward(building.state, "READY_TO_COLLECT");
   return true;
 }
@@ -169,7 +170,7 @@ function settleProduction(
         if (output !== null && output.goodId !== job.outputs.goodId) {
           break;
         }
-        output = { goodId: job.outputs.goodId, qty: (output?.qty ?? 0) + job.outputs.qty };
+        output = { goodId: job.outputs.goodId, qty: (output?.qty ?? 0) + job.outputs.qty, readyAt: output?.readyAt ?? job.completesAt };
       }
       const jobMutable = job as { movedToOutputAt: number | null };
       jobMutable.movedToOutputAt = now;
@@ -264,4 +265,15 @@ export function buildingLevel(value: number): BuildingLevel {
     return value;
   }
   throw new Error(`building level ${value} is outside 1..3`);
+}
+
+function settleUpgrade(building: WorldBuilding, now: number): boolean {
+  if (building.state !== "UPGRADING" || building.upgradeCompletesAt == null || building.upgradeCompletesAt > now) return false;
+  const mutable = building as { state: WorldBuilding["state"]; level: BuildingLevel; upgradeCompletesAt: number | null; lastCollectedAt: number | null };
+  const placeable = findPlaceable(building.definitionId);
+  mutable.state = placeable?.kind === "building" && placeable.definition.category === "commercial" ? "NEEDS_SUPPLY" : "ACTIVE";
+  if (mutable.lastCollectedAt !== null && placeable?.kind === "building") mutable.lastCollectedAt += placeable.definition.buildSeconds * building.level * 1000;
+  mutable.level = buildingLevel(building.level + 1);
+  mutable.upgradeCompletesAt = null;
+  return true;
 }

@@ -62,3 +62,5 @@ export { ROAD, type RoadDefinition } from "./roads";
 export { CONTENT_VERSION } from "./version";
 
 assertPlayableAssets(phase01AssetIds());
+
+export { BUILDING_UPGRADE } from "./upgrades";

@@ -1,3 +1,4 @@
+import { WAREHOUSE_UPGRADE } from "../content/upgrades";
 import { LEVELS } from "../content/levels";
 import { chebyshevFootprints, type FootprintRect } from "./iso";
 
@@ -145,7 +146,7 @@ export function warehouseCapacity(tier: number): number {
   if (!Number.isInteger(tier) || tier < 0 || tier > WAREHOUSE_MAX_TIER) {
     throw new Error("warehouse tier must be an integer from 0 to 5");
   }
-  return 40 + 20 * tier;
+  return WAREHOUSE_UPGRADE.baseCapacity + WAREHOUSE_UPGRADE.capacityPerTier * tier;
 }
 
 export function warehouseUpgradeCost(nextTier: number): { readonly coins: number; readonly planks: number } {
@@ -153,9 +154,9 @@ export function warehouseUpgradeCost(nextTier: number): { readonly coins: number
     throw new Error("warehouse upgrade tier must be an integer from 1 to 5");
   }
   if (nextTier === 1) {
-    return { coins: 400, planks: 0 };
+    return { coins: WAREHOUSE_UPGRADE.baseCoinCost, planks: 0 };
   }
-  return { coins: 400 * nextTier, planks: 2 * nextTier };
+  return { coins: WAREHOUSE_UPGRADE.baseCoinCost * nextTier, planks: WAREHOUSE_UPGRADE.planksPerTier * nextTier };
 }
 
 export type UpgradeGoodId = "GOOD_PAINT" | "GOOD_PLANKS";

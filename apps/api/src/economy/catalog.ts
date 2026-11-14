@@ -169,7 +169,7 @@ export function serializeStock(stock: BuildingStock): Record<string, unknown> {
   };
 }
 
-export type OutputReady = { readonly goodId: GoodId; readonly qty: number };
+export type OutputReady = { readonly goodId: GoodId; readonly qty: number; readonly readyAt?: number };
 
 export function parseOutput(value: unknown): OutputReady | null {
   if (!isRecord(value) || typeof value.goodId !== "string" || !isGoodId(value.goodId)) {
@@ -178,11 +178,11 @@ export function parseOutput(value: unknown): OutputReady | null {
   if (typeof value.qty !== "number" || !Number.isInteger(value.qty) || value.qty <= 0) {
     return null;
   }
-  return { goodId: value.goodId, qty: value.qty };
+  return { goodId: value.goodId, qty: value.qty, ...(typeof value.readyAt === "number" ? { readyAt: value.readyAt } : {}) };
 }
 
-export function serializeOutput(output: OutputReady | null): { goodId?: string; qty?: number } {
-  return output === null ? {} : { goodId: output.goodId, qty: output.qty };
+export function serializeOutput(output: OutputReady | null): { goodId?: string; qty?: number; readyAt?: number } {
+  return output === null ? {} : { goodId: output.goodId, qty: output.qty, ...(output.readyAt === undefined ? {} : { readyAt: output.readyAt }) };
 }
 
 export function serializeStacks(stacks: readonly { readonly goodId: GoodId; readonly qty: number }[]): Record<string, unknown> {
