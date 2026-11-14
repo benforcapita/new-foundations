@@ -1,4 +1,4 @@
-import { catalogAvailability, hasReady } from "./cityPanelState";
+import { canPlaceFlowerBench, catalogAvailability, hasReady } from "./cityPanelState";
 import { useEffect, useRef, useState } from "react";
 import { AGRICULTURE, BUILDINGS, DECORATIONS, LEVELS, QUESTS, RECIPES, canPlace, loadEnglishLocalization } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
@@ -51,12 +51,12 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
     </section>
     {snapshot && panel === "quests" && <section className="city-panel" data-testid="quest-tracker" aria-label="Quests">
       <h2>Quests</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
-      {snapshot.quests.filter(q => q.status !== "CLAIMED").map(q => {
+      {snapshot.quests.filter(q => q.status !== "CLAIMED" || (q.questId === "quest_flower_street" && canPlaceFlowerBench(snapshot))).map(q => {
         const def = QUESTS.find(item => item.id === q.questId);
         return <article key={`${q.questId}:${q.periodKey}`} data-testid={`quest-card-${q.questId}`}>
           <strong>{label(def?.nameKey ?? "", q.questId)}</strong> <span>{q.status}</span>
           {def?.steps.map((step, index) => <div key={index}>{step.event.replaceAll("_", " ")}: {q.stepState[String(index)] ?? 0}/{step.amount}</div>)}
-          {q.questId === "quest_flower_street" && q.status === "ACTIVE" && q.stepState["5"] === 1 && q.stepState["6"] === 0 && <button type="button" data-testid="place-flower-bench" onClick={() => {
+          {q.questId === "quest_flower_street" && canPlaceFlowerBench(snapshot) && <button type="button" data-testid="place-flower-bench" onClick={() => {
             const bench = DECORATIONS.find(d => d.id === "D-003");
             if (!bench) return;
             const city = livePlacementCity(snapshot);

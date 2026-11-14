@@ -1000,3 +1000,53 @@ test("claim does not report a removed quest bench as a new reward", async () => 
   expect(claim.statusCode).toBe(200);
   expect(asRecord(asRecord(commandSuccessSchema.parse(claim.json()).result).reward)).toEqual({ coins: 300, xp: 60 });
 });
+
+async function removedFlowerBench() {
+  const session = await guest();
+  await handle.pool.query(`insert into quests (city_id, quest_id, period_key, track, status, step_index, step_state, started_at, version)
+    values ($1, 'quest_flower_street', '-', 'story', 'ACTIVE', 6, '{"0":1,"1":3,"2":3,"3":1,"4":1,"5":1,"6":0}', now(), 1)`, [session.cityId]);
+  const placed = await command(session, "place-building", { definitionId: "D-003", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode).toBe(200);
+  const instanceId = readString(asRecord(commandSuccessSchema.parse(placed.json()).result).instanceId);
+  expect((await command(session, "remove-building", { instanceId })).statusCode).toBe(200);
+  return { session, instanceId };
+}
+
+test.each(["COMPLETED", "CLAIMED", "ACTIVE"])("re-places the removed Flower Street bench while %s below level 4", async (status) => {
+  const { session, instanceId } = await removedFlowerBench();
+  if (status === "CLAIMED") expect((await command(session, "claim-quest", { questId: "quest_flower_street", periodKey: "-" })).statusCode).toBe(200);
+  if (status === "ACTIVE") await handle.pool.query("update quests set status = 'ACTIVE', step_index = 7 where city_id = $1 and quest_id = 'quest_flower_street'", [session.cityId]);
+  const level = await handle.pool.query<{ level: number }>("select level from cities where id = $1", [session.cityId]);
+  expect(level.rows[0]?.level).toBeLessThan(4);
+  const placed = await command(session, "place-building", { definitionId: "D-003", x: 1, y: 4, rotation: 0 });
+  expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+  const second = await command(session, "place-building", { definitionId: "D-003", x: 2, y: 4, rotation: 0 });
+  expect(second.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(second.json()).error.code).toBe("LOCKED_BY_LEVEL");
+  const undo = await command(session, "remove-building", { instanceId, undo: true });
+  expect(undo.statusCode).not.toBe(200);
+  const benches = await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'D-003' and removed_at is null", [session.cityId]);
+  expect(benches.rowCount).toBe(1);
+});
+
+test("concurrent Flower Street bench replacements allow exactly one", async () => {
+  const { session } = await removedFlowerBench();
+  const results = await Promise.all([1, 2].map(x => command(session, "place-building", { definitionId: "D-003", x, y: 4, rotation: 0 })));
+  expect(results.map(result => result.statusCode).sort()).toEqual([200, 422]);
+  const rejected = results.find(result => result.statusCode === 422);
+  expect(apiErrorSchema.parse(rejected?.json()).error.code).toBe("LOCKED_BY_LEVEL");
+  const benches = await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'D-003' and removed_at is null", [session.cityId]);
+  expect(benches.rowCount).toBe(1);
+});
+
+test("claim reports the active re-placed bench when an older bench was removed", async () => {
+  const { session } = await removedFlowerBench();
+  const placed = await command(session, "place-building", { definitionId: "D-003", x: 1, y: 4, rotation: 0 });
+  expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+  const claim = await command(session, "claim-quest", { questId: "quest_flower_street", periodKey: "-" });
+  expect(claim.statusCode).toBe(200);
+  expect(asRecord(asRecord(commandSuccessSchema.parse(claim.json()).result).reward)).toEqual({ coins: 300, xp: 60, decorationId: "D-003" });
+  const benches = await handle.pool.query("select removed_at from building_instances where city_id = $1 and definition_id = 'D-003'", [session.cityId]);
+  expect(benches.rows.filter(row => row.removed_at === null)).toHaveLength(1);
+  expect(benches.rows.filter(row => row.removed_at !== null)).toHaveLength(1);
+});
