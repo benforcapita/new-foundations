@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Snapshot } from "@nf/shared/schemas";
-import { useSettings, type CollectPriority } from "../settings";
+import { useSettings, storedPriority, type CollectPriority } from "../settings";
 
 function downloadFile(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -17,9 +17,9 @@ export function SettingsPanel({ snapshot, close }: { snapshot: Snapshot; close: 
     <button data-testid="settings-reduced-motion" aria-pressed={settings.reducedMotion} onClick={() => settings.toggle("reducedMotion")}>Reduced Motion: {settings.reducedMotion ? "On" : "Off"}</button>
     <button data-testid="settings-music" aria-pressed={!settings.musicMuted} onClick={() => settings.toggle("musicMuted")}>Music: {settings.musicMuted ? "Off" : "On"}</button>
     <button data-testid="settings-sfx" aria-pressed={!settings.sfxMuted} onClick={() => settings.toggle("sfxMuted")}>SFX: {settings.sfxMuted ? "Off" : "On"}</button>
-    <label>Collect priority <select data-testid="settings-collect-priority" value={settings.collectPriority} onChange={e => settings.setPriority(e.target.value as CollectPriority)}><option value="default">Default</option><option value="buildings">Buildings</option><option value="production">Production</option></select></label>
+    <label>Collect priority <select data-testid="settings-collect-priority" value={storedPriority(localStorage) ?? snapshot.city.collectPriority} onChange={e => settings.setPriority(e.target.value as CollectPriority)}><option value="QUEST_FIRST">Quest First</option><option value="OLDEST_FIRST">Oldest First</option></select></label>
     <button data-testid="settings-recovery-code" onClick={() => setShowCode(!showCode)}>Recovery code</button>
-    {showCode && <div><p>Save this code to restore your city: <code>{localStorage.getItem("nf_recovery_code") ?? "Unavailable"}</code></p><label>Restore a city <input value={code} onChange={e => setCode(e.target.value)} /></label><button onClick={() => { void import("../api/client").then(async ({ api }) => { try { const session = await api.session({ recoveryCode: code }); localStorage.setItem("nf_session_token", session.token); localStorage.setItem("nf_recovery_code", code); window.location.reload(); } catch { setError("Invalid recovery code"); } }); }}>Restore</button>{error && <p role="alert">{error}</p>}</div>}
+    {showCode && <div><p>Save this code to restore your city: <code>{localStorage.getItem("nf_recovery_code") ?? "Unavailable"}</code></p><label>Restore a city <input value={code} onChange={e => setCode(e.target.value)} /></label><button onClick={() => { void import("../api/client").then(async ({ api }) => { try { const session = await api.session({ recoveryCode: code.trim() }); localStorage.setItem("nf_session_token", session.token); localStorage.setItem("nf_recovery_code", code.trim()); window.location.reload(); } catch { setError("Invalid recovery code"); } }); }}>Restore</button>{error && <p role="alert">{error}</p>}</div>}
     <button data-testid="settings-export-json" onClick={() => downloadFile(new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" }), "new-foundations-city.json")}>Export city JSON</button>
     <button data-testid="settings-reset" onClick={() => setConfirmation(1)}>Reset city</button>
     {confirmation === 1 && <div><p>Start a new city?</p><button data-testid="settings-reset-confirm-1" onClick={() => setConfirmation(2)}>Continue</button><button onClick={() => setConfirmation(0)}>Cancel</button></div>}

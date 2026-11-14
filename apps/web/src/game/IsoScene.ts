@@ -722,6 +722,21 @@ export class IsoScene extends Phaser.Scene {
   };
 
   private readonly onPaint = (): void => {
+    if (new URLSearchParams(window.location.search).get("e2e") === "1" && this.game.canvas.parentElement) {
+      const camera = this.cameras.main;
+      const screenRect = (item: Phaser.GameObjects.Image | Phaser.GameObjects.Text | null) => {
+        if (!item) return null;
+        const bounds = item.getBounds();
+        return { x: (bounds.x - camera.scrollX - camera.width / 2) * camera.zoom + camera.width / 2, y: (bounds.y - camera.scrollY - camera.height / 2) * camera.zoom + camera.height / 2, width: bounds.width * camera.zoom, height: bounds.height * camera.zoom };
+      };
+      this.game.canvas.parentElement.dataset.overlayVisibility = JSON.stringify({
+        photoMode: useSceneStore.getState().photoMode,
+        icons: this.badges.filter(b => b.icon?.visible).length,
+        labels: this.badges.filter(b => b.label?.visible).length,
+        regions: this.badges.filter(b => b.icon && b.label).map(b => ({ icon: screenRect(b.icon), label: screenRect(b.label) })),
+        ghost: [this.ghostImage, this.ghostIcon, this.ghostLabel, this.ghostHint, this.ghostFoot].filter(item => item?.visible).length,
+      });
+    }
     if (this.ghostStamp === null) {
       return;
     }
