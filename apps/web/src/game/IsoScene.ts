@@ -666,7 +666,7 @@ export class IsoScene extends Phaser.Scene {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     const start = this.press;
-    if (!this.isDemo() && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) {
+    if (!this.isDemo() && !useSceneStore.getState().photoMode && start && Math.hypot(event.clientX - start.x, event.clientY - start.y) < 5) {
       const placement = usePlacementStore.getState();
       const ghost = useSceneStore.getState().ghost;
       if (placement.catalogId && ghost.active && ghost.tone === "valid") {
@@ -811,7 +811,7 @@ export class IsoScene extends Phaser.Scene {
     if (requestedMove) { this.movingId = requestedMove; useSceneStore.getState().publish({ moveId: null }); }
     if (placement.catalogId === null) this.movingId = null;
     const previousLatency = useSceneStore.getState().ghost.latencyMs;
-    if (placement.catalogId === null || this.pointerWorld === null) {
+    if (useSceneStore.getState().photoMode || placement.catalogId === null || this.pointerWorld === null) {
       image.setVisible(false);
       icon.setVisible(false);
       label.setVisible(false);
@@ -853,9 +853,11 @@ export class IsoScene extends Phaser.Scene {
     label.setDepth(depth);
     label.setVisible(true);
     foot.clear();
+    foot.setVisible(true);
     foot.setDepth(depth);
     paintDiamond(foot, grid.gx, grid.gy, footprint.width, footprint.height, feedback.tint, 0.2);
     hint.clear();
+    hint.setVisible(true);
     hint.setDepth(depth);
     let roadHintDrawn = false;
     if (feedback.roadHint) {

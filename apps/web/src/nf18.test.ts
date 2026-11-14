@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readSettings, saveSettings } from "./settings";
 import { buildingStatus, statusIcon } from "./components/buildingStatus";
-import { useSceneStore } from "./game/scene-store";
+import { usePlacementStore, useSceneStore } from "./game/scene-store";
 
 describe("NF-18 state", () => {
   it("preserves legacy settings and persists collect priority", () => {
@@ -26,6 +26,12 @@ describe("NF-18 state", () => {
     expect(buildingStatus("READY_TO_COLLECT")).toBe("Ready");
     expect(buildingStatus("NEEDS_SUPPLY")).toBe("Needs supply");
     expect(buildingStatus("ACTIVE")).toBe("Idle");
+  });
+  it("cancels placement when entering photo mode", () => {
+    usePlacementStore.getState().select("B-001");
+    useSceneStore.getState().publish({ photoMode: true });
+    expect(usePlacementStore.getState().catalogId).toBeNull();
+    useSceneStore.getState().publish({ photoMode: false });
   });
   it("tracks entering and exiting photo mode", () => {
     useSceneStore.getState().publish({ photoMode: true });

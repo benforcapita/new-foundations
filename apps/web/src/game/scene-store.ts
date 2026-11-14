@@ -86,6 +86,7 @@ export const useSceneStore = create<SceneState>((set) => ({
   cropOffset: 0,
   aim: null,
   publish: (patch) => {
+    if (patch.photoMode === true) usePlacementStore.getState().cancel();
     set(patch);
   },
   aimAt: (x, y, zoom) => {
