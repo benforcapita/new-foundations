@@ -2,6 +2,7 @@ import {
   STARTER_MAP,
   AGRICULTURE,
   DECORATIONS,
+  ROAD,
   placeableFromBuilding,
   TERRAIN_ASSETS,
   agricultureById,
@@ -13,7 +14,7 @@ import {
 } from "@nf/shared";
 import Phaser from "phaser";
 import { useCityStore, visibleSnapshot } from "../api/store";
-import { liveBuildings, livePlots, livePlacementCity } from "./liveCity";
+import { liveBuildings, livePlots, livePlacementCity, liveRoadTiles, decorationPreview } from "./liveCity";
 import { useSettings } from "../settings";
 import { bundledPngIds, resolveAssetUrl } from "./assetUrls";
 import { cropBobOffset } from "./bob";
@@ -178,6 +179,7 @@ export class IsoScene extends Phaser.Scene {
   private lod: LodMode = "detailed";
   private unsubscribe: (() => void) | null = null;
   private host: HTMLElement | null = null;
+  private previewLabels: Phaser.GameObjects.Text[] = [];
   private ghostImage: Phaser.GameObjects.Image | null = null;
   private ghostIcon: Phaser.GameObjects.Image | null = null;
   private ghostLabel: Phaser.GameObjects.Text | null = null;
@@ -304,9 +306,12 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private drawRoads(): void {
-    for (const road of this.isDemo() ? demoRoadTiles() : []) {
+    const roads = this.isDemo() ? demoRoadTiles() : liveRoadTiles(this.snapshot());
+    if (this.game.canvas.parentElement) this.game.canvas.parentElement.dataset.roadTiles = JSON.stringify(roads.map(road => ({ x: road.x, y: road.y, assetId: road.sprite.assetId })));
+    for (const road of roads) {
       const image = placeAnchored(this, road.sprite.assetId, road.x, road.y, 1, 1, ROAD_DEPTH);
       image.setFlip(road.sprite.flipX, road.sprite.flipY);
+      if (road.sprite.angle) { const width = image.displayWidth; const center = cellCenter(road.x, road.y); image.setOrigin(0.5).setPosition(center.x, center.y).setDisplaySize(image.displayHeight, width).setAngle(road.sprite.angle); }
     }
   }
 
@@ -812,6 +817,10 @@ export class IsoScene extends Phaser.Scene {
     if (image === null || icon === null || label === null || hint === null || foot === null) {
       return;
     }
+    const host = this.game.canvas.parentElement;
+    if (host) { host.dataset.previewRadius = ""; host.dataset.previewBoosts = ""; }
+    for (const item of this.previewLabels) item.destroy();
+    this.previewLabels = [];
     const placement = usePlacementStore.getState();
     const requestedMove = useSceneStore.getState().moveId;
     if (requestedMove) { this.movingId = requestedMove; useSceneStore.getState().publish({ moveId: null }); }
@@ -831,11 +840,12 @@ export class IsoScene extends Phaser.Scene {
     const grid = screenToGrid(this.pointerWorld.x, this.pointerWorld.y, MAP_ORIGIN_X, MAP_ORIGIN_Y);
     const plotDefinition = AGRICULTURE.find(p => p.id === placement.catalogId);
     const decoration = DECORATIONS.find(d => d.id === placement.catalogId);
-    const definition = plotDefinition ? { id: plotDefinition.id, category: "agriculture" as const, footprint: plotDefinition.footprint, costCoins: plotDefinition.cost.coins, unlockLevel: plotDefinition.unlockLevel } : decoration ? { id: decoration.id, category: "decoration" as const, footprint: decoration.footprint, costCoins: decoration.cost.coins, unlockLevel: decoration.unlockLevel } : placeableFromBuilding(buildingById(placement.catalogId as import("@nf/shared").BuildingId));
+    const road = placement.catalogId === ROAD.id;
+    const definition = road ? { id: ROAD.id, category: "road" as const, footprint: ROAD.footprint, costCoins: ROAD.cost.coins, unlockLevel: ROAD.unlockLevel } : plotDefinition ? { id: plotDefinition.id, category: "agriculture" as const, footprint: plotDefinition.footprint, costCoins: plotDefinition.cost.coins, unlockLevel: plotDefinition.unlockLevel } : decoration ? { id: decoration.id, category: "decoration" as const, footprint: decoration.footprint, costCoins: decoration.cost.coins, unlockLevel: decoration.unlockLevel } : placeableFromBuilding(buildingById(placement.catalogId as import("@nf/shared").BuildingId));
     const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, placement.rotation);
     const result = canPlace(this.placementCity(), definition, grid.gx, grid.gy, placement.rotation);
     const feedback = ghostFeedback(result);
-    const assetId = plotDefinition ? plotDefinition.groundAssetId : decoration ? (decoration.assetId ?? "deco_fountain") : buildingById(placement.catalogId as import("@nf/shared").BuildingId).assetId;
+    const assetId = road ? ROAD.tiles.straightEw : plotDefinition ? plotDefinition.groundAssetId : decoration ? (decoration.assetId ?? "deco_fountain") : buildingById(placement.catalogId as import("@nf/shared").BuildingId).assetId;
     const meta = getAssetMeta(assetId);
     image.setTexture(assetId);
     const aspect = image.width === 0 ? 1 : image.height / image.width;
@@ -863,6 +873,17 @@ export class IsoScene extends Phaser.Scene {
     foot.setVisible(true);
     foot.setDepth(depth);
     paintDiamond(foot, grid.gx, grid.gy, footprint.width, footprint.height, feedback.tint, 0.2);
+    const park = placement.catalogId === "B-012" ? buildingById("B-012") : null;
+    const radius = decoration?.radius ?? (park?.category === "decoration" ? park.boostRadius : 0);
+    if (radius > 0 && !this.isDemo()) {
+      paintDiamond(foot, grid.gx - radius, grid.gy - radius, footprint.width + 2 * radius, footprint.height + 2 * radius, 0x60c987, 0.12);
+      const affectedBusinesses = decorationPreview(this.snapshot().buildings.filter(b => b.id !== this.movingId), placement.catalogId, grid.gx, grid.gy, placement.rotation);
+      if (host) { host.dataset.previewRadius = String(radius); host.dataset.previewBoosts = affectedBusinesses.map(b => `+${Math.round(b.boost * 100)}%`).join(","); }
+      for (const affected of affectedBusinesses) {
+        const pos = cellCenter(affected.x, affected.y);
+        this.previewLabels.push(this.add.text(pos.x, pos.y, `+${Math.round(affected.boost * 100)}%`, { color: "#ffffff", backgroundColor: "#24784b", fontSize: "16px" }).setDepth(depth + 1));
+      }
+    }
     hint.clear();
     hint.setVisible(true);
     hint.setDepth(depth);

@@ -1,9 +1,9 @@
 import { canPlaceFlowerBench, catalogAvailability, hasReady } from "./cityPanelState";
 import { useEffect, useRef, useState } from "react";
-import { AGRICULTURE, BUILDINGS, DECORATIONS, LEVELS, QUESTS, RECIPES, canPlace, loadEnglishLocalization } from "@nf/shared";
+import { AGRICULTURE, BUILDINGS, DECORATIONS, ROAD, LEVELS, QUESTS, RECIPES, canPlace, loadEnglishLocalization } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import { useCityStore } from "../api/store";
-import { livePlacementCity } from "../game/liveCity";
+import { liveBusinessModifiers, livePlacementCity } from "../game/liveCity";
 import { usePlacementStore, useSceneStore } from "../game/scene-store";
 
 const labels = loadEnglishLocalization();
@@ -33,6 +33,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
   const selectedId = useSceneStore(s => s.selectedId);
   const building = snapshot?.buildings.find(b => b.id === selectedId);
   const definition = building && [...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].find(d => d.id === building.definitionId);
+  const modifiers = building && snapshot ? liveBusinessModifiers(building, snapshot.buildings) : null;
   const ready = hasReady(snapshot);
   const enqueue = useCityStore(s => s.enqueue);
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer); }, []);
@@ -83,7 +84,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       })}
     </section>}
     {panel === "catalog" && snapshot && <section className="city-panel" aria-label="Build catalog"><h2>Build catalog</h2><button type="button" onClick={() => setPanel(null)}>Close</button>
-      {[...BUILDINGS, ...AGRICULTURE, ...DECORATIONS].map(d => {
+      {[...BUILDINGS, ...AGRICULTURE, ...DECORATIONS, ROAD].map(d => {
         const { locked, affordable, cost } = catalogAvailability(snapshot, d);
         return <div key={d.id} data-testid={`catalog-item-${d.id}`}><button type="button" disabled={locked || !affordable} onClick={() => { usePlacementStore.getState().select(d.id); setPanel(null); }}>{label(d.nameKey, d.id)} ({d.id}) — {cost} coins</button>{locked && <span data-testid={`catalog-lock-${d.id}`}> Locked: requires level {d.unlockLevel}</span>}{!locked && !affordable && <span> Not enough coins</span>}</div>;
       })}</section>}
@@ -93,6 +94,7 @@ export function CityPanels({ snapshot }: { snapshot: Snapshot | null }) {
       <button type="button" data-testid="details-remove" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "remove-building", body: { instanceId: building.id } }); setUndo(building.id); useSceneStore.getState().publish({ selectedId: null }); }}>Remove</button>
       {building.state === "NEEDS_SUPPLY" && <button type="button" data-testid="details-supply" onClick={() => enqueue({ key: crypto.randomUUID(), name: "supply-business", body: { instanceId: building.id } })}>Supply</button>}
       {(building.state === "READY_TO_COLLECT" || (building.definitionId === "B-004" && building.state === "ACTIVE")) && <button type="button" data-testid="details-collect" onClick={() => { enqueue({ key: crypto.randomUUID(), name: "collect", body: { instanceId: building.id } }); feedback(); }}>Collect</button>}
+      {modifiers && <div data-testid="boost-breakdown"><p>Decoration boost: +{Math.round(modifiers.decorationBoost * 100)}%</p><p>Road bonus: +{Math.round(modifiers.roadBonus * 100)}%</p><p>Reward: {modifiers.reward} coins per cycle</p></div>}
       {"stockInput" in definition && <p>Inputs: {definition.stockInput.map(i => `${i.goodId} ${i.qty} (stored ${snapshot.inventory[i.goodId] ?? 0})`).join(", ")}</p>}
       {"outputGoodId" in definition && <p>Output: {definition.outputQty} {definition.outputGoodId}</p>}
       {"category" in definition && definition.category === "production" && <div data-testid="production-queue"><h3>Production queue</h3><p>Slots: {snapshot.jobs.filter(j => j.buildingId === building.id).length}/{snapshot.city.level >= 5 ? 3 : 2}</p>

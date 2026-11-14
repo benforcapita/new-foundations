@@ -1,4 +1,4 @@
-import type { AgricultureId, BuildingId, DecorationId, QuarterTurns } from "@nf/shared";
+import type { AgricultureId, BuildingId, DecorationId, RoadId, QuarterTurns } from "@nf/shared";
 import { create } from "zustand";
 import { cycleRotation } from "./ghost";
 import type { LodMode } from "./lod";
@@ -95,9 +95,9 @@ export const useSceneStore = create<SceneState>((set) => ({
 }));
 
 type PlacementState = {
-  readonly catalogId: BuildingId | AgricultureId | DecorationId | null;
+  readonly catalogId: BuildingId | AgricultureId | DecorationId | RoadId | null;
   readonly rotation: QuarterTurns;
-  select: (catalogId: BuildingId | AgricultureId | DecorationId) => void;
+  select: (catalogId: BuildingId | AgricultureId | DecorationId | RoadId) => void;
   cancel: () => void;
   rotate: () => void;
 };

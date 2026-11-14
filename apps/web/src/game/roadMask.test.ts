@@ -54,8 +54,8 @@ test("auto-tile picks straight, corner, T, and cross sprites", () => {
     flipX: false,
     flipY: true,
   });
-  expect(roadSpriteForMask(ROAD.north | ROAD.south | ROAD.east).assetId).toBe("tile_road_cross");
-  expect(roadSpriteForMask(ROAD.north | ROAD.south | ROAD.west).assetId).toBe("tile_road_cross");
+  expect(roadSpriteForMask(ROAD.north | ROAD.south | ROAD.east)).toEqual({ assetId: "tile_road_t", flipX: false, flipY: false, angle: 90 });
+  expect(roadSpriteForMask(ROAD.north | ROAD.south | ROAD.west)).toEqual({ assetId: "tile_road_t", flipX: false, flipY: false, angle: -90 });
   expect(roadSpriteForMask(ROAD.north | ROAD.east | ROAD.south | ROAD.west)).toEqual({
     assetId: "tile_road_cross",
     flipX: false,
