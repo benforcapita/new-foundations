@@ -72,5 +72,6 @@
   "npc.amir.name": "Amir",
   "npc.amir.summary": "Amir teaches parks, flowers, and neighborhood identity.",
   "npc.dana.city.name": "Dana's City",
-  "npc.amir.garden.name": "Amir's Garden"
+  "npc.amir.garden.name": "Amir's Garden",
+  "quest.tom_train.title": "Tom: Fill a train wagon"
 }

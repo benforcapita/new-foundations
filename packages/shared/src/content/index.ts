@@ -64,3 +64,4 @@ export { CONTENT_VERSION } from "./version";
 assertPlayableAssets(phase01AssetIds());
 
 export { BUILDING_UPGRADE } from "./upgrades";
+export { default as TRAIN_BALANCE } from "./train.balance.json" with { type: "json" };

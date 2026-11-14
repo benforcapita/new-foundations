@@ -14,9 +14,11 @@ import {
   trainShipments,
 } from "../db/schema";
 import { ApiError } from "../errors";
+import { ensureTrain } from "./train";
 import { presentSnapshot } from "./present";
 
 export async function loadCurrentCity(db: Database, cityId: string, now: Date): Promise<Snapshot> {
+  await ensureTrain(db, cityId, now);
   const found = await db.select().from(cities).where(eq(cities.id, cityId)).limit(1);
   const city = found[0];
   if (city === undefined) {

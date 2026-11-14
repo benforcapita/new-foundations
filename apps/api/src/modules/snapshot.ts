@@ -13,6 +13,7 @@ import {
   trainShipments,
 } from "../db/schema";
 import { ApiError } from "../errors";
+import { ensureTrain } from "./train";
 import { loadCurrentCity } from "./city";
 import { presentCityHeader, presentDelta, presentInventory, type PresentedBuilding, type PresentedFranchise, type PresentedJob, type PresentedOrder, type PresentedQuest, type PresentedTrain } from "./present";
 
@@ -24,10 +25,12 @@ export async function loadCitySnapshot(
   now: Date,
 ): Promise<Snapshot | Delta> {
   const found = await db.select().from(cities).where(and(eq(cities.id, cityId), eq(cities.ownerId, ownerId))).limit(1);
-  const city = found[0];
-  if (city === undefined) {
+  if (found[0] === undefined) {
     throw new ApiError(404, "NOT_FOUND", "City not found");
   }
+  await ensureTrain(db, cityId, now);
+  const [city] = await db.select().from(cities).where(eq(cities.id, cityId)).limit(1);
+  if (!city) throw new ApiError(404, "NOT_FOUND", "City not found");
   if (sinceVersion !== null && sinceVersion > Number(city.version)) {
     throw new ApiError(400, "VALIDATION", "sinceVersion cannot exceed the city version");
   }
@@ -144,7 +147,7 @@ export function presentedOrder(row: typeof orderInstances.$inferSelect): Present
   };
 }
 
-function presentedTrain(row: typeof trainShipments.$inferSelect): PresentedTrain {
+export function presentedTrain(row: typeof trainShipments.$inferSelect): PresentedTrain {
   return {
     id: row.id,
     status: row.status,

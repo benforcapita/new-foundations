@@ -1,0 +1,8 @@
+{
+  "wagonQuantity": 3,
+  "introQuestReward": {
+    "coins": 0,
+    "xp": 0
+  },
+  "introWagonsRequired": 1
+}

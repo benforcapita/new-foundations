@@ -430,6 +430,7 @@ test("levels L1 through L15 carry the cumulative XP thresholds", () => {
 
 test("quests, orders, and NPCs cover the starter loop", () => {
   expect(QUESTS.map((quest) => quest.id)).toEqual([
+    "quest_tom_train",
     "quest_tutorial_house",
     "quest_tutorial_grocery",
     "quest_tutorial_bakery",

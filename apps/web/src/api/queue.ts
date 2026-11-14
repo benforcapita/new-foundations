@@ -1,7 +1,7 @@
 import { QUESTS, RECIPES } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import type { CommandBody } from "./client";
-type Name = "upgrade-warehouse" | "upgrade-building" | "set-collect-priority" | "claim-quest" | "place-building" | "move-building" | "remove-building" | "collect" | "collect-all" | "start-production" | "cancel-production" | "supply-business" | "fulfill-order" | "reroll-order";
+type Name = "train-supply" | "train-dispatch" | "upgrade-warehouse" | "upgrade-building" | "set-collect-priority" | "claim-quest" | "place-building" | "move-building" | "remove-building" | "collect" | "collect-all" | "start-production" | "cancel-production" | "supply-business" | "fulfill-order" | "reroll-order";
 export type PendingCommand = { [N in Name]: { key: string; name: N; body: CommandBody<N> } }[Name];
 export function composeSnapshot(snapshot: Snapshot, queue: readonly PendingCommand[]): Snapshot {
   let buildings = [...snapshot.buildings];
