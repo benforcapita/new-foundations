@@ -1,5 +1,5 @@
 import { presentedOrder, presentedFranchise, presentedQuest } from "./snapshot";
-import { and, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, count, eq, gt, inArray, isNull } from "drizzle-orm";
 import { TERRAIN_KINDS, type TerrainKind } from "@nf/shared/content";
 import { BUILDING_STATES, type BuildingState } from "@nf/shared/rules";
 import type { Delta } from "@nf/shared/schemas";
@@ -136,6 +136,7 @@ export async function readChangedDelta(
   const changedOrders = await tx.select().from(orderInstances).where(and(eq(orderInstances.cityId, city.id), gt(orderInstances.version, fromVersion)));
   const changedQuests = await tx.select().from(quests).where(and(eq(quests.cityId, city.id), gt(quests.version, fromVersion)));
   const changedFranchises = await tx.select().from(franchises).where(and(eq(franchises.ownerCity, city.id), gt(franchises.version, fromVersion)));
+  const counts = includeCity ? await tx.select({ definitionId: buildingInstances.definitionId, count: count() }).from(buildingInstances).where(eq(buildingInstances.cityId, city.id)).groupBy(buildingInstances.definitionId) : [];
   return presentDelta({
     orders: changedOrders.map(presentedOrder),
     quests: changedQuests.map(presentedQuest),
@@ -143,7 +144,7 @@ export async function readChangedDelta(
     fromVersion,
     toVersion,
     inventory,
-    ...(includeCity ? { city: presentCityHeader(city, toVersion) } : {}),
+    ...(includeCity ? { city: presentCityHeader(city, Object.fromEntries(counts.map(row => [row.definitionId, row.count])), toVersion) } : {}),
     buildings: active,
     removedBuildingIds,
     jobs: changedJobs.map(toPresentedJob),

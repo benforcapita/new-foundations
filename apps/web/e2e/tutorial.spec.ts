@@ -63,12 +63,12 @@ test("quest claims pay once and update the HUD", async ({ page, request }) => {
   await expect(page.getByTestId("hud-xp")).toContainText("XP: 25");
   await page.getByTestId("quest-claim-quest_flower_street").click();
   await expect(page.getByTestId("sync-status")).toHaveText("Synced");
-  await expect(page.getByTestId("hud-xp")).toContainText("XP: 85");
+  await expect(page.getByTestId("hud-xp")).toContainText("XP: 35");
   const coins = await page.getByTestId("hud-coins").textContent();
   const duplicate = await request.post(`http://127.0.0.1:${apiPort}/v1/cities/${session.cityId}/commands/claim-quest`, { headers: { authorization: `Bearer ${session.token}`, "idempotency-key": crypto.randomUUID() }, data: { questId: "quest_flower_street", periodKey: "-" } });
   expect(duplicate.status()).toBe(409);
   await page.reload();
   if (coins === null) throw new Error("Coin balance missing");
   await expect(page.getByTestId("hud-coins")).toHaveText(coins);
-  await expect(page.getByTestId("hud-xp")).toContainText("XP: 85");
+  await expect(page.getByTestId("hud-xp")).toContainText("XP: 35");
 });

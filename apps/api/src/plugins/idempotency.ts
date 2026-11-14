@@ -204,7 +204,11 @@ export async function runCommand(
       gems: city.gems,
       civicStars: city.civicStars,
     };
+    const priorRewards = effects.ledger.some(entry => entry.source === "level_reward")
+      ? await tx.select({ resource: inventoryLedger.resource }).from(inventoryLedger).where(and(eq(inventoryLedger.cityId, input.cityId), eq(inventoryLedger.source, "level_reward")))
+      : [];
     for (const entry of effects.ledger) {
+      if (entry.source === "level_reward" && priorRewards.some(reward => reward.resource === entry.resource)) continue;
       if (entry.delta === 0) {
         throw new Error("inventory_ledger delta must be non-zero");
       }

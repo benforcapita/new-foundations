@@ -367,6 +367,12 @@ export class IsoScene extends Phaser.Scene {
   private drawBuildings(): void {
     if (!this.isDemo()) for (const building of this.snapshot().buildings) {
       const decoration = DECORATIONS.find(d => d.id === building.definitionId);
+      if (decoration?.id === "LM-001") {
+        for (let dy = 0; dy < 4; dy++) for (let dx = 0; dx < 4; dx++) placeAnchored(this, "tile_plaza", building.x + dx, building.y + dy, 1, 1, GROUND_DEPTH + 10);
+        placeAnchored(this, "deco_fountain", building.x + 1, building.y + 1, 2, 2, footprintDepth(building.x + 1, building.y + 1, 2, 2));
+        for (const [dx, dy] of [[0, 0], [3, 0], [0, 3], [3, 3]] as const) placeAnchored(this, "deco_lamp", building.x + dx, building.y + dy, 1, 1, footprintDepth(building.x + dx, building.y + dy, 1, 1));
+        continue;
+      }
       if (!decoration?.assetId) continue;
       const size = rotatedFootprint(decoration.footprint.width, decoration.footprint.height, building.rotation);
       placeAnchored(this, decoration.assetId, building.x, building.y, size.width, size.height, footprintDepth(building.x, building.y, size.width, size.height));
@@ -824,11 +830,12 @@ export class IsoScene extends Phaser.Scene {
     }
     const grid = screenToGrid(this.pointerWorld.x, this.pointerWorld.y, MAP_ORIGIN_X, MAP_ORIGIN_Y);
     const plotDefinition = AGRICULTURE.find(p => p.id === placement.catalogId);
-    const definition = plotDefinition ? { id: plotDefinition.id, category: "agriculture" as const, footprint: plotDefinition.footprint, costCoins: plotDefinition.cost.coins, unlockLevel: plotDefinition.unlockLevel } : placeableFromBuilding(buildingById(placement.catalogId as import("@nf/shared").BuildingId));
+    const decoration = DECORATIONS.find(d => d.id === placement.catalogId);
+    const definition = plotDefinition ? { id: plotDefinition.id, category: "agriculture" as const, footprint: plotDefinition.footprint, costCoins: plotDefinition.cost.coins, unlockLevel: plotDefinition.unlockLevel } : decoration ? { id: decoration.id, category: "decoration" as const, footprint: decoration.footprint, costCoins: decoration.cost.coins, unlockLevel: decoration.unlockLevel } : placeableFromBuilding(buildingById(placement.catalogId as import("@nf/shared").BuildingId));
     const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, placement.rotation);
     const result = canPlace(this.placementCity(), definition, grid.gx, grid.gy, placement.rotation);
     const feedback = ghostFeedback(result);
-    const assetId = plotDefinition ? plotDefinition.groundAssetId : buildingById(placement.catalogId as import("@nf/shared").BuildingId).assetId;
+    const assetId = plotDefinition ? plotDefinition.groundAssetId : decoration ? (decoration.assetId ?? "deco_fountain") : buildingById(placement.catalogId as import("@nf/shared").BuildingId).assetId;
     const meta = getAssetMeta(assetId);
     image.setTexture(assetId);
     const aspect = image.width === 0 ? 1 : image.height / image.width;

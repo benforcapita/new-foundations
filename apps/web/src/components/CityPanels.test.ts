@@ -13,6 +13,15 @@ describe("city HUD decisions", () => {
     expect(station.unlockLevel).toBe(3);
     expect(catalogAvailability(snapshot, cottage)).toEqual({ locked: false, affordable: true, cost: 0 });
   });
+  it("prices removed first-free buildings using their placement history", () => {
+    for (const id of ["B-001", "B-007"]) {
+      const definition = BUILDINGS.find(b => b.id === id);
+      if (!definition) throw new Error("Missing catalog definition");
+      const city = { ...snapshot.city, coins: 100, placedCounts: { [id]: 1 } };
+      expect(catalogAvailability({ ...snapshot, city }, definition)).toMatchObject({ cost: definition.cost.coins, affordable: false });
+      expect(catalogAvailability({ ...snapshot, city: { ...city, coins: definition.cost.coins } }, definition)).toMatchObject({ cost: definition.cost.coins, affordable: true });
+    }
+  });
   it("enables collect all only when an instance is ready", () => {
     expect(hasReady(snapshot)).toBe(false);
     expect(hasReady({ ...snapshot, buildings: [{ state: "READY_TO_COLLECT" } as Snapshot["buildings"][number]] })).toBe(true);

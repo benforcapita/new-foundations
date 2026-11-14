@@ -10,12 +10,11 @@ export function livePlots(snapshot: Snapshot): DemoPlot[] {
 }
 export function livePlacementCity(snapshot: Snapshot): PlacementCity {
   const occupied = new Map<string, string>();
-  const ownedCounts: Record<string, number> = {};
+  const ownedCounts = { ...snapshot.city.placedCounts };
   for (const building of snapshot.buildings) {
     const id = building.definitionId;
     const definition = BUILDINGS.some((item) => item.id === id) ? buildingById(id as BuildingId) : AGRICULTURE.some((item) => item.id === id) ? agricultureById(id as AgricultureId) : DECORATIONS.find(d => d.id === id) ?? null;
     if (!definition) continue;
-    ownedCounts[id] = (ownedCounts[id] ?? 0) + 1;
     const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, building.rotation);
     for (let y = building.y; y < building.y + footprint.height; y++) for (let x = building.x; x < building.x + footprint.width; x++) occupied.set(`${x},${y}`, building.id);
   }

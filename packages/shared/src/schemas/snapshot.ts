@@ -7,6 +7,7 @@ const buildingLevelSchema = z.union([z.literal(1), z.literal(2), z.literal(3)]);
 const terrainSchema = z.enum(["grass", "grass_flowers", "plaza", "water", "shore"]);
 
 export const cityHeaderSchema = z.object({
+  placedCounts: z.record(z.string().min(1), z.number().int().nonnegative()).default({}),
   cityId: z.string().min(1),
   ownerId: z.string().min(1).nullable(),
   name: z.string().min(1),

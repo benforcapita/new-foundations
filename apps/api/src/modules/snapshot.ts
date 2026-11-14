@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, asc, count, eq, gt, isNull, ne } from "drizzle-orm";
 import { deltaSchema, snapshotQuerySchema, type Delta, type Snapshot } from "@nf/shared/schemas";
 import { wantsFullSnapshot } from "../economy/snapshotMode";
 import type { Database } from "../db/client";
@@ -35,7 +35,7 @@ export async function loadCitySnapshot(
     return loadCurrentCity(db, cityId, now);
   }
   const fromVersion = sinceVersion ?? 0;
-  const [buildings, jobs, orders, trains, ownedFranchises, hostedFranchises, questRows, balances] = await Promise.all([
+  const [buildings, jobs, orders, trains, ownedFranchises, hostedFranchises, questRows, balances, counts] = await Promise.all([
     db.select().from(buildingInstances).where(and(eq(buildingInstances.cityId, cityId), gt(buildingInstances.version, fromVersion))),
     db
       .select()
@@ -52,6 +52,7 @@ export async function loadCitySnapshot(
     db.select().from(franchises).where(and(eq(franchises.hostCity, cityId), gt(franchises.version, fromVersion))),
     db.select().from(quests).where(and(eq(quests.cityId, cityId), gt(quests.version, fromVersion))),
     db.select().from(inventoryBalances).where(and(eq(inventoryBalances.cityId, cityId), gt(inventoryBalances.version, fromVersion))),
+    db.select({ definitionId: buildingInstances.definitionId, count: count() }).from(buildingInstances).where(eq(buildingInstances.cityId, cityId)).groupBy(buildingInstances.definitionId),
   ]);
   const active: PresentedBuilding[] = [];
   const removedBuildingIds: string[] = [];
@@ -75,7 +76,7 @@ export async function loadCitySnapshot(
       fromVersion,
       toVersion: Number(city.version),
       inventory: presentInventory(balances),
-      ...(fromVersion < Number(city.version) ? { city: presentCityHeader(city) } : {}),
+      ...(fromVersion < Number(city.version) ? { city: presentCityHeader(city, Object.fromEntries(counts.map(row => [row.definitionId, row.count]))) } : {}),
       buildings: active,
       removedBuildingIds,
       jobs: jobs.map(presentedJob),

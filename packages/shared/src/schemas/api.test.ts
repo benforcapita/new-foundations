@@ -30,6 +30,7 @@ const headers = {
 function sampleSnapshot(): Snapshot {
   return {
     city: {
+      placedCounts: {},
       cityId: "city-1",
       ownerId: "player-1",
       name: "First Town",

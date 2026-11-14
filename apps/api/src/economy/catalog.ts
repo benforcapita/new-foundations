@@ -117,6 +117,8 @@ export type BuildingStock = {
   readonly tutorialCycle: boolean;
   readonly tutorialUsed: boolean;
   readonly paidCoins?: number;
+  readonly placementXp?: number;
+  readonly removedXp?: number;
 };
 
 export function emptyStock(): BuildingStock {
@@ -130,6 +132,8 @@ export function cloneStock(stock: BuildingStock): BuildingStock {
     tutorialCycle: stock.tutorialCycle,
     tutorialUsed: stock.tutorialUsed,
     ...(stock.paidCoins === undefined ? {} : { paidCoins: stock.paidCoins }),
+    ...(stock.placementXp === undefined ? {} : { placementXp: stock.placementXp }),
+    ...(stock.removedXp === undefined ? {} : { removedXp: stock.removedXp }),
   };
 }
 
@@ -139,6 +143,8 @@ export function parseStock(value: unknown): BuildingStock {
   }
   if ("goods" in value || "pendingCoins" in value || "tutorialCycle" in value || "tutorialUsed" in value || "paidCoins" in value) {
     return {
+      ...(typeof value.placementXp === "number" ? { placementXp: nonNegativeInt(value.placementXp) } : {}),
+      ...(typeof value.removedXp === "number" ? { removedXp: nonNegativeInt(value.removedXp) } : {}),
       goods: parseGoods(value.goods),
       pendingCoins: nonNegativeInt(value.pendingCoins),
       tutorialCycle: value.tutorialCycle === true,
@@ -158,6 +164,8 @@ export function serializeStock(stock: BuildingStock): Record<string, unknown> {
     tutorialCycle: stock.tutorialCycle,
     tutorialUsed: stock.tutorialUsed,
     ...(stock.paidCoins === undefined ? {} : { paidCoins: stock.paidCoins }),
+    ...(stock.placementXp === undefined ? {} : { placementXp: stock.placementXp }),
+    ...(stock.removedXp === undefined ? {} : { removedXp: stock.removedXp }),
   };
 }
 

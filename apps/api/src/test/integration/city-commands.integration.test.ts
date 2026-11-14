@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
-import { PASSIVE_CAP_SECONDS } from "@nf/shared";
+import { BUILDINGS, PASSIVE_CAP_SECONDS } from "@nf/shared";
+import { catalogAvailability } from "../../../../web/src/components/cityPanelState";
 import { apiErrorSchema, commandSuccessSchema, deltaSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
 import { lockCityIds } from "../../plugins/idempotency";
@@ -48,7 +49,7 @@ test("US-001 places the first cottage free and adds population once", async () =
   const placed = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 }, key);
   expect(placed.statusCode).toBe(200);
   const body = commandSuccessSchema.parse(placed.json());
-  expect(body.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 1, population: 8, populationCap: 50 });
+  expect(body.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 0, population: 8, populationCap: 50 });
   expect(body.cityVersion).toBe(2);
   const replay = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 }, key);
   expect(replay.statusCode).toBe(200);
@@ -58,7 +59,7 @@ test("US-001 places the first cottage free and adds population once", async () =
   expect(reused.statusCode).toBe(422);
   expect(apiErrorSchema.parse(reused.json()).error.code).toBe("IDEMPOTENCY_KEY_REUSED");
   const city = await cityRow(session.cityId);
-  expect(city).toMatchObject({ population: 8, coins: 750, xp: 1, version: 2 });
+  expect(city).toMatchObject({ population: 8, coins: 750, xp: 0, version: 2 });
   const cottages = await handle.pool.query<{ count: string }>(
     "select count(*)::text as count from building_instances where city_id = $1 and definition_id = 'B-001' and removed_at is null",
     [session.cityId],
@@ -68,8 +69,37 @@ test("US-001 places the first cottage free and adds population once", async () =
     "select count(*)::text as rows, coalesce(sum(delta), 0)::text as total from inventory_ledger where city_id = $1 and resource = 'XP'",
     [session.cityId],
   );
-  expect(xp.rows[0]).toEqual({ rows: "1", total: "1" });
+  expect(xp.rows[0]).toEqual({ rows: "0", total: "0" });
   await assertLedgerReconciled(session.cityId);
+});
+
+test("removed first cottage retains its catalog price in snapshots and commands", async () => {
+  const session = await guest();
+  const first = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 });
+  expect(first.statusCode).toBe(200);
+  const result = asRecord(commandSuccessSchema.parse(first.json()).result);
+  expect(result).toMatchObject({ cost: 0, state: "ACTIVE" });
+  const removed = await command(session, "remove-building", { instanceId: String(result.instanceId) });
+  expect(removed.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(first.json()).delta.city?.placedCounts["B-001"]).toBe(1);
+  expect(commandSuccessSchema.parse(removed.json()).delta.city?.placedCounts["B-001"]).toBe(1);
+  const response = await app.inject({ method: "GET", url: "/v1/cities/current", headers: { authorization: session.authorization } });
+  const snapshot = snapshotSchema.parse(response.json());
+  expect(snapshot.buildings.some(b => b.definitionId === "B-001")).toBe(false);
+  expect(snapshot.city.placedCounts["B-001"]).toBe(1);
+  const cottage = BUILDINGS.find(b => b.id === "B-001");
+  if (!cottage) throw new Error("Missing cottage definition");
+  const catalogPrice = catalogAvailability(snapshot, cottage).cost;
+  expect(catalogPrice).toBe(180);
+  await handle.pool.query("update cities set coins = 100 where id = $1", [session.cityId]);
+  const payload = { definitionId: "B-001", x: 0, y: 4, rotation: 0 };
+  const broke = await command(session, "place-building", payload);
+  expect(broke.statusCode).toBe(409);
+  expect(apiErrorSchema.parse(broke.json()).error.code).toBe("INSUFFICIENT_COINS");
+  await handle.pool.query("update cities set coins = 500 where id = $1", [session.cityId]);
+  const replacement = await command(session, "place-building", payload);
+  expect(replacement.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(replacement.json()).result).toMatchObject({ cost: catalogPrice, state: "UNDER_CONSTRUCTION" });
 });
 
 test("US-002 settles rent for five ready cottages once", async () => {
@@ -96,7 +126,7 @@ test("US-002 settles rent for five ready cottages once", async () => {
   advance(480_000);
   const collected = await command(session, "collect-all", {});
   expect(collected.statusCode, JSON.stringify(collected.json())).toBe(200);
-  expect(commandSuccessSchema.parse(collected.json()).result).toMatchObject({ coins: 160, xp: 0 });
+  expect(commandSuccessSchema.parse(collected.json()).result).toMatchObject({ coins: 160, xp: 16 });
   const again = await command(session, "collect-all", {});
   expect(again.statusCode).toBe(200);
   expect(commandSuccessSchema.parse(again.json()).result).toMatchObject({ coins: 0 });
@@ -142,6 +172,8 @@ test("a seventh cottage is rejected once population would pass the cap", async (
   }
   const city = await cityRow(session.cityId);
   expect(city.population).toBe(48);
+  const homes = await handle.pool.query("select id from building_instances where city_id = $1 and definition_id = 'B-001' and removed_at is null", [session.cityId]);
+  expect(homes.rowCount).toBe(6);
   await assertLedgerReconciled(session.cityId);
 });
 
@@ -179,7 +211,7 @@ test("US-003 starts, cancels, shifts, and collects a bakery job", async () => {
     collected: 3,
     remaining: 0,
     warehouseFull: false,
-    xp: 0,
+    xp: 3,
   });
   const bread = await handle.pool.query<{ qty: number }>(
     "select qty from inventory_balances where city_id = $1 and good_id = 'GOOD_BREAD'",
@@ -300,7 +332,7 @@ test("US-009 replays one tutorial grocery collection for ten identical keys", as
   }
   expect(first.replayed).toBeUndefined();
   const body = commandSuccessSchema.parse(first.json());
-  expect(body.result).toMatchObject({ coins: 110, xp: 0 });
+  expect(body.result).toMatchObject({ coins: 110, xp: 6 });
   for (const response of responses.slice(1)) {
     expect(response.replayed).toBe("true");
     expect(response.json()).toEqual(first.json());
@@ -883,9 +915,9 @@ test("completed tutorial quest can be claimed only once", async () => {
   expect((await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 })).statusCode).toBe(200);
   const claim = await command(session, "claim-quest", { questId: "quest_tutorial_house", periodKey: "-" });
   expect(claim.statusCode).toBe(200);
-  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 11 });
+  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 10 });
   expect((await command(session, "claim-quest", { questId: "quest_tutorial_house", periodKey: "-" })).statusCode).not.toBe(200);
-  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 11 });
+  expect(await cityRow(session.cityId)).toMatchObject({ coins: 800, xp: 10 });
 });
 
 test.each([
@@ -1049,4 +1081,113 @@ test("claim reports the active re-placed bench when an older bench was removed",
   const benches = await handle.pool.query("select removed_at from building_instances where city_id = $1 and definition_id = 'D-003'", [session.cityId]);
   expect(benches.rows.filter(row => row.removed_at === null)).toHaveLength(1);
   expect(benches.rows.filter(row => row.removed_at !== null)).toHaveLength(1);
+});
+
+
+test.each([
+  ["B-002", 4, 430, 180, 4], ["B-003", 9, 1750, 2400, 9],
+  ["B-005", 5, 980, 720, 4], ["B-006", 10, 1800, 2100, 4],
+  ["B-008", 4, 860, 600, 9], ["B-010", 6, 1250, 1800, 9],
+  ["B-011", 3, 900, 480, 12], ["B-012", 4, 600, 300, 9],
+] as const)("%s enforces its level and places with catalog cost, time and footprint", async (id, level, cost, seconds, cells) => {
+  const session = await guest();
+  await handle.pool.query("update cities set level = $2, coins = 5000, population_cap = 500 where id = $1", [session.cityId, level - 1]);
+  const payload = { definitionId: id, x: 0, y: 4, rotation: 1 };
+  const locked = await command(session, "place-building", payload);
+  expect(locked.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(locked.json()).error.code).toBe("LOCKED_BY_LEVEL");
+  await handle.pool.query("update cities set level = $2 where id = $1", [session.cityId, level]);
+  const placed = await command(session, "place-building", payload);
+  expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+  const result = asRecord(commandSuccessSchema.parse(placed.json()).result);
+  expect(result.cost).toBe(cost);
+  const instance = await handle.pool.query<{ construction_completes_at: Date | null }>("select construction_completes_at from building_instances where id = $1", [result.instanceId]);
+  expect(instance.rows[0]?.construction_completes_at?.getTime()).toBe(now.getTime() + seconds * 1000);
+  const occupied = await handle.pool.query("select 1 from building_cells where building_id = $1", [result.instanceId]);
+  expect(occupied.rowCount).toBe(cells);
+  if (id === "B-011") {
+    const edges = await handle.pool.query<{ x: number; y: number }>("select x, y from building_cells where building_id = $1", [result.instanceId]);
+    expect(edges.rows).toContainEqual({ x: 2, y: 7 });
+    expect(edges.rows).not.toContainEqual({ x: 3, y: 4 });
+  }
+  expect((await cityRow(session.cityId)).coins).toBe(5000 - cost);
+  const collision = await command(session, "place-building", payload);
+  expect(collision.statusCode).toBe(409);
+});
+
+
+test("the Town Square landmark is locked until level 15 and occupies one 4 by 4 instance", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set level = 14, coins = 5000 where id = $1", [session.cityId]);
+  const payload = { definitionId: "LM-001", x: 0, y: 4, rotation: 0 };
+  const locked = await command(session, "place-building", payload);
+  expect(locked.statusCode).toBe(422);
+  expect(apiErrorSchema.parse(locked.json()).error.code).toBe("LOCKED_BY_LEVEL");
+  await handle.pool.query("update cities set level = 15 where id = $1", [session.cityId]);
+  const placed = await command(session, "place-building", payload);
+  expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+  const result = asRecord(commandSuccessSchema.parse(placed.json()).result);
+  const occupied = await handle.pool.query("select 1 from building_cells where building_id = $1", [result.instanceId]);
+  expect(occupied.rowCount).toBe(16);
+});
+
+
+test("placing a building grants XP and advances the level at the catalog threshold", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set xp = 45 where id = $1", [session.cityId]);
+  const placed = await command(session, "place-building", { definitionId: "AG-001", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(placed.json()).result).toMatchObject({ xp: 5 });
+  const city = await handle.pool.query<{ xp: string; level: number }>("select xp, level from cities where id = $1", [session.cityId]);
+  expect(city.rows[0]).toMatchObject({ xp: "50", level: 2 });
+});
+
+test("a second Town Hall can be purchased to increase the population cap", async () => {
+  const session = await guest();
+  const placed = await command(session, "place-building", { definitionId: "B-009", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+  expect(await cityRow(session.cityId)).toMatchObject({ population_cap: 100 });
+});
+
+
+test.each(["B-009", "B-001", "D-001"])("repeated %s placement and removal cannot farm XP", async (definitionId) => {
+  const session = await guest();
+  await handle.pool.query("update cities set level = 4, xp = 390, coins = 10000 where id = $1", [session.cityId]);
+  let expectedCoins = 10000;
+  for (let i = 0; i < 20; i++) {
+    const placed = await command(session, "place-building", { definitionId, x: 0, y: 4, rotation: 0 });
+    expect(placed.statusCode, JSON.stringify(placed.json())).toBe(200);
+    const result = asRecord(commandSuccessSchema.parse(placed.json()).result);
+    const cost = Number(result.cost);
+    if (definitionId === "B-001") expect(cost).toBe(i === 0 ? 0 : 180);
+    else expect(cost).toBe(0);
+    expectedCoins -= cost;
+    const removed = await command(session, "remove-building", { instanceId: String(result.instanceId) });
+    expect(removed.statusCode, JSON.stringify(removed.json())).toBe(200);
+    expectedCoins += Math.floor(cost / 2);
+    const city = await cityRow(session.cityId);
+    expect(Number(city.xp)).toBe(390);
+    expect(Number(city.coins)).toBe(expectedCoins);
+  }
+});
+
+
+test("removal reverses paid placement XP and undo restores it without repeating level rewards", async () => {
+  const session = await guest();
+  await handle.pool.query("update cities set xp = 16495, level = 11, coins = 10000 where id = $1", [session.cityId]);
+  // Set XP just below the actual level 12 threshold.
+  const { LEVELS } = await import("@nf/shared");
+  const threshold = LEVELS.slice(0, 11).reduce((sum, level) => sum + (level.xpToNext ?? 0), 0);
+  await handle.pool.query("update cities set xp = $2 where id = $1", [session.cityId, threshold - 5]);
+  const placed = await command(session, "place-building", { definitionId: "AG-001", x: 0, y: 4, rotation: 0 });
+  expect(placed.statusCode).toBe(200);
+  const id = String(asRecord(commandSuccessSchema.parse(placed.json()).result).instanceId);
+  const level = async () => (await handle.pool.query<{ level: number }>("select level from cities where id = $1", [session.cityId])).rows[0]?.level;
+  expect(await level()).toBe(12);
+  expect((await command(session, "remove-building", { instanceId: id })).statusCode).toBe(200);
+  expect(await level()).toBe(11);
+  expect((await command(session, "remove-building", { instanceId: id, undo: true })).statusCode).toBe(200);
+  expect(await level()).toBe(12);
+  const rewards = await handle.pool.query("select resource, delta from inventory_ledger where city_id = $1 and source = 'level_reward'", [session.cityId]);
+  expect(rewards.rows).toHaveLength(2);
 });

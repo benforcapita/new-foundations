@@ -74,9 +74,9 @@ export function planPlace(
   if (placeable === null) {
     return failure(400, "VALIDATION", "Unknown building");
   }
-  const owned = activeBuildings(world.buildings).filter((building) => building.definitionId === command.definitionId).length;
-  const charged = chargedCoins(placeable, owned);
-  const seconds = buildSeconds(placeable, owned);
+  const everOwned = world.buildings.filter((building) => building.definitionId === command.definitionId).length;
+  const charged = chargedCoins(placeable, everOwned);
+  const seconds = buildSeconds(placeable, everOwned);
   const flower = world.quests.find(q => q.questId === "quest_flower_street");
   const flowerDefinition = QUESTS.find(q => q.id === "quest_flower_street");
   const firstBench = flower?.status === "ACTIVE" && flower.stepIndex === 6
@@ -111,7 +111,7 @@ export function planPlace(
     constructionCompletesAt: timing.constructionCompletesAt,
     cycleStartedAt: timing.cycleStartedAt,
     lastCollectedAt: timing.lastCollectedAt,
-    stock: { goods: {}, pendingCoins: 0, tutorialCycle: false, tutorialUsed: false, paidCoins: charged },
+    stock: { goods: {}, pendingCoins: 0, tutorialCycle: false, tutorialUsed: false, paidCoins: charged, placementXp: placementXp(charged) },
     outputReady: null,
     removedAt: null,
     undoExpiresAt: null,
@@ -122,7 +122,7 @@ export function planPlace(
   if (charged > 0) {
     ledger.push({ resource: "COINS", delta: -charged, source: "building_placed", refType: "building", refId: building.id });
   }
-  ledger.push({ resource: "XP", delta: xp, source: "building_placed", refType: "building", refId: building.id });
+  if (xp > 0) ledger.push({ resource: "XP", delta: xp, source: "building_placed", refType: "building", refId: building.id });
   ledger.push(...levelRewardEntries(world.city.xp, world.city.xp + xp));
   const population = projectPopulation([...world.buildings, building]);
   return {
@@ -214,8 +214,11 @@ export function planRemove(world: World, command: { readonly instanceId: string;
   const placeable = findPlaceable(building.definitionId);
   const basis = building.stock.paidCoins ?? (placeable === null ? 0 : catalogCost(placeable));
   const refund = removalRefund(basis);
+  const grantedXp = building.stock.placementXp ?? (building.stock.paidCoins === undefined ? 0 : Math.max(5, Math.round(building.stock.paidCoins / 25)));
+  const removedXp = Math.min(world.city.xp, grantedXp);
   const removed: WorldBuilding = {
     ...cloneBuilding(building),
+    stock: { ...cloneBuilding(building).stock, removedXp },
     removedAt: world.now,
     undoExpiresAt: world.now + UNDO_WINDOW_SECONDS * 1000,
   };
@@ -223,6 +226,7 @@ export function planRemove(world: World, command: { readonly instanceId: string;
   if (refund > 0) {
     ledger.push({ resource: "COINS", delta: refund, source: "building_removed", refType: "building", refId: building.id });
   }
+  if (removedXp > 0) ledger.push({ resource: "XP", delta: -removedXp, source: "building_removed", refType: "building", refId: building.id });
   const population = projectPopulation(world.buildings.map((entry) => (entry.id === building.id ? removed : entry)));
   return {
     ok: true,
@@ -579,7 +583,12 @@ export function planCollect(world: World, command: { readonly instanceId?: strin
       writes.push(next);
     }
   }
-  const result: CollectResult = { coins, xp: 0, goods, collected, remaining, warehouseFull };
+  const xp = collected + ledger.filter(entry => entry.resource === "COINS").reduce((sum, entry) => sum + Math.round(entry.delta / 20), 0);
+  if (xp > 0) {
+    ledger.push({ resource: "XP", delta: xp, source: "collection" });
+    ledger.push(...levelRewardEntries(world.city.xp, world.city.xp + xp));
+  }
+  const result: CollectResult = { coins, xp, goods, collected, remaining, warehouseFull };
   const name = coins > 0 ? "coins_collected" : "goods_collected";
   return {
     ok: true,
@@ -621,6 +630,9 @@ function planUndoRemove(world: World, building: WorldBuilding): Plan {
   if (refund > 0) {
     ledger.push({ resource: "COINS", delta: -refund, source: "building_remove_undo", refType: "building", refId: building.id });
   }
+  const restoredXp = building.stock.removedXp ?? 0;
+  if (restoredXp > 0) ledger.push({ resource: "XP", delta: restoredXp, source: "building_remove_undo", refType: "building", refId: building.id });
+  ledger.push(...levelRewardEntries(world.city.xp, world.city.xp + restoredXp));
   const population = projectPopulation(world.buildings.map((entry) => (entry.id === building.id ? restored : entry)));
   return {
     ok: true,
@@ -747,8 +759,8 @@ function placementCity(
 ): PlacementCity {
   const ownedCounts: Record<string, number> = {};
   const roads: { x: number; y: number; id: string }[] = [];
+  for (const building of world.buildings) ownedCounts[building.definitionId] = (ownedCounts[building.definitionId] ?? 0) + 1;
   for (const building of activeBuildings(world.buildings)) {
-    ownedCounts[building.definitionId] = (ownedCounts[building.definitionId] ?? 0) + 1;
     if (building.definitionId === "R-001") {
       for (const cell of footprintCells(building.definitionId, building.x, building.y, building.rotation)) {
         roads.push({ ...cell, id: building.id });
@@ -781,7 +793,7 @@ function placeMessage(reason: string): string {
     case "INSUFFICIENT_COINS":
       return "Not enough coins";
     case "POP_CAP":
-      return "Population cap reached";
+      return "Build a civic building to grow";
     case "OUT_OF_BOUNDS":
       return "Placement is out of bounds";
     case "CHUNK_LOCKED":

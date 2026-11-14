@@ -24,10 +24,8 @@ test("the first cottage is free, instant, and adds eight residents once", () => 
   if (!placed.ok) {
     return;
   }
-  expect(placed.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 1, population: 8, populationCap: 50 });
-  expect(placed.ledger).toEqual([
-    expect.objectContaining({ resource: "XP", delta: 1, source: "building_placed" }),
-  ]);
+  expect(placed.result).toMatchObject({ state: "ACTIVE", cost: 0, xp: 0, population: 8, populationCap: 50 });
+  expect(placed.ledger).toEqual([]);
   expect(placed.cellReplaces[0]?.cells).toHaveLength(4);
   const again = planPlace(withBuilding(grassWorld(), placed.buildings[0]), { definitionId: "B-001", x: 16, y: 12, rotation: 0 }, { ...IDS, instanceId: "33333333-3333-4333-8333-333333333333" });
   expect(again.ok).toBe(true);
@@ -36,6 +34,38 @@ test("the first cottage is free, instant, and adds eight residents once", () => 
   }
   expect(again.result).toMatchObject({ state: "UNDER_CONSTRUCTION", cost: 180, population: 16 });
   expect(again.buildings[0]?.constructionCompletesAt).toBe(NOW + 30_000);
+});
+
+test("a removed first cottage costs 180 and takes 30 seconds to replace", () => {
+  const first = planPlace(grassWorld(), { definitionId: "B-001", x: 12, y: 12, rotation: 0 }, IDS);
+  if (!first.ok) throw new Error("first placement failed");
+  const standing = withBuilding(grassWorld(), first.buildings[0]);
+  const removed = planRemove(standing, { instanceId: IDS.instanceId });
+  if (!removed.ok) throw new Error("removal failed");
+  const world = withBuilding(standing, removed.buildings[0]);
+  const command = { definitionId: "B-001", x: 16, y: 12, rotation: 0 as const };
+  expect(planPlace({ ...world, city: { ...world.city, coins: 100 } }, command, IDS)).toMatchObject({ ok: false, status: 409, code: "INSUFFICIENT_COINS" });
+  const replacement = planPlace(world, command, IDS);
+  expect(replacement.ok).toBe(true);
+  if (!replacement.ok) return;
+  expect(replacement.result).toMatchObject({ cost: 180, state: "UNDER_CONSTRUCTION" });
+  expect(replacement.buildings[0]?.constructionCompletesAt).toBe(NOW + 30_000);
+});
+
+test.each([
+  ["B-002", 4, 430, 180, 4], ["B-003", 9, 1750, 2400, 9],
+  ["B-005", 5, 980, 720, 4], ["B-006", 10, 1800, 2100, 4],
+  ["B-008", 4, 860, 600, 9], ["B-010", 6, 1250, 1800, 9],
+  ["B-011", 3, 900, 480, 12], ["B-012", 4, 600, 300, 9],
+] as const)("%s is gated and uses its catalog cost, time and footprint", (id, level, cost, seconds, cells) => {
+  const command = { definitionId: id, x: 12, y: 12, rotation: 1 as const };
+  expect(planPlace(grassWorld({ level: level - 1, coins: 5000 }), command, IDS)).toMatchObject({ ok: false, status: 422, code: "LOCKED_BY_LEVEL" });
+  const placed = planPlace(grassWorld({ level, coins: 5000 }), command, IDS);
+  expect(placed.ok).toBe(true);
+  if (!placed.ok) return;
+  expect(placed.result).toMatchObject({ cost, xp: Math.max(5, Math.round(cost / 25)) });
+  expect(placed.buildings[0]?.constructionCompletesAt).toBe(NOW + seconds * 1000);
+  expect(placed.cellReplaces[0]?.cells).toHaveLength(cells);
 });
 
 test("placement reports population cap and insufficient coins from canPlace", () => {
@@ -214,7 +244,7 @@ test("lazy timers finish construction, hold a ripe plot, and cap rent and sales 
   if (!rent.ok) {
     return;
   }
-  expect(rent.result).toMatchObject({ coins: 90 * 32, xp: 0 });
+  expect(rent.result).toMatchObject({ coins: 90 * 32, xp: 150 });
 
   const grocery = building({
     id: "grocery",

@@ -115,8 +115,9 @@ export type PresentedQuest = {
   readonly version: number;
 };
 
-export function presentCityHeader(city: PresentedCity, version = Number(city.version)): CityHeader {
+export function presentCityHeader(city: PresentedCity, placedCounts: Record<string, number>, version = Number(city.version)): CityHeader {
   return {
+    placedCounts,
     cityId: city.id,
     ownerId: city.ownerId,
     name: city.name,
@@ -149,6 +150,7 @@ export function presentInventory(balances: readonly PresentedBalance[]): Snapsho
 
 export function presentSnapshot(input: {
   readonly city: PresentedCity;
+  readonly placedCounts: Record<string, number>;
   readonly cells: readonly PresentedCell[];
   readonly buildings: readonly PresentedBuilding[];
   readonly inventory: readonly PresentedBalance[];
@@ -161,7 +163,7 @@ export function presentSnapshot(input: {
   readonly contentVersion: number;
 }): Snapshot {
   return snapshotSchema.parse({
-    city: presentCityHeader(input.city),
+    city: presentCityHeader(input.city, input.placedCounts),
     cells: input.cells.map((cell) => ({
       x: cell.x,
       y: cell.y,
