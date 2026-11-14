@@ -9,6 +9,6 @@ export function canPlaceFlowerBench(snapshot: Snapshot) {
         || (quest.stepState["5"] === 1 && (quest.stepState["6"] ?? 0) === 0))));
 }
 export function catalogAvailability(snapshot: Snapshot, definition: typeof BUILDINGS[number] | typeof AGRICULTURE[number] | typeof DECORATIONS[number]) {
-  const free = "firstFree" in definition && definition.firstFree && !snapshot.buildings.some(b => b.definitionId === definition.id);
+  const free = "firstFree" in definition && definition.firstFree && (snapshot.city.placedCounts?.[definition.id] ?? 0) === 0;
   return { locked: snapshot.city.level < definition.unlockLevel, affordable: free || snapshot.city.coins >= definition.cost.coins, cost: free ? 0 : definition.cost.coins };
 }

@@ -74,10 +74,9 @@ export function planPlace(
   if (placeable === null) {
     return failure(400, "VALIDATION", "Unknown building");
   }
-  const owned = activeBuildings(world.buildings).filter((building) => building.definitionId === command.definitionId).length;
   const everOwned = world.buildings.filter((building) => building.definitionId === command.definitionId).length;
   const charged = chargedCoins(placeable, everOwned);
-  const seconds = buildSeconds(placeable, owned);
+  const seconds = buildSeconds(placeable, everOwned);
   const flower = world.quests.find(q => q.questId === "quest_flower_street");
   const flowerDefinition = QUESTS.find(q => q.id === "quest_flower_street");
   const firstBench = flower?.status === "ACTIVE" && flower.stepIndex === 6
@@ -760,8 +759,8 @@ function placementCity(
 ): PlacementCity {
   const ownedCounts: Record<string, number> = {};
   const roads: { x: number; y: number; id: string }[] = [];
+  for (const building of world.buildings) ownedCounts[building.definitionId] = (ownedCounts[building.definitionId] ?? 0) + 1;
   for (const building of activeBuildings(world.buildings)) {
-    ownedCounts[building.definitionId] = (ownedCounts[building.definitionId] ?? 0) + 1;
     if (building.definitionId === "R-001") {
       for (const cell of footprintCells(building.definitionId, building.x, building.y, building.rotation)) {
         roads.push({ ...cell, id: building.id });

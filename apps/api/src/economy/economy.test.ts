@@ -36,6 +36,22 @@ test("the first cottage is free, instant, and adds eight residents once", () => 
   expect(again.buildings[0]?.constructionCompletesAt).toBe(NOW + 30_000);
 });
 
+test("a removed first cottage costs 180 and takes 30 seconds to replace", () => {
+  const first = planPlace(grassWorld(), { definitionId: "B-001", x: 12, y: 12, rotation: 0 }, IDS);
+  if (!first.ok) throw new Error("first placement failed");
+  const standing = withBuilding(grassWorld(), first.buildings[0]);
+  const removed = planRemove(standing, { instanceId: IDS.instanceId });
+  if (!removed.ok) throw new Error("removal failed");
+  const world = withBuilding(standing, removed.buildings[0]);
+  const command = { definitionId: "B-001", x: 16, y: 12, rotation: 0 as const };
+  expect(planPlace({ ...world, city: { ...world.city, coins: 100 } }, command, IDS)).toMatchObject({ ok: false, status: 409, code: "INSUFFICIENT_COINS" });
+  const replacement = planPlace(world, command, IDS);
+  expect(replacement.ok).toBe(true);
+  if (!replacement.ok) return;
+  expect(replacement.result).toMatchObject({ cost: 180, state: "UNDER_CONSTRUCTION" });
+  expect(replacement.buildings[0]?.constructionCompletesAt).toBe(NOW + 30_000);
+});
+
 test.each([
   ["B-002", 4, 430, 180, 4], ["B-003", 9, 1750, 2400, 9],
   ["B-005", 5, 980, 720, 4], ["B-006", 10, 1800, 2100, 4],

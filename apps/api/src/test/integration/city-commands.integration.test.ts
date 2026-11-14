@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, expect, test } from "vitest";
-import { PASSIVE_CAP_SECONDS } from "@nf/shared";
+import { BUILDINGS, PASSIVE_CAP_SECONDS } from "@nf/shared";
+import { catalogAvailability } from "../../../../web/src/components/cityPanelState";
 import { apiErrorSchema, commandSuccessSchema, deltaSchema, snapshotSchema } from "@nf/shared/schemas";
 import { buildApp } from "../../app";
 import { lockCityIds } from "../../plugins/idempotency";
@@ -70,6 +71,35 @@ test("US-001 places the first cottage free and adds population once", async () =
   );
   expect(xp.rows[0]).toEqual({ rows: "0", total: "0" });
   await assertLedgerReconciled(session.cityId);
+});
+
+test("removed first cottage retains its catalog price in snapshots and commands", async () => {
+  const session = await guest();
+  const first = await command(session, "place-building", { definitionId: "B-001", x: 0, y: 4, rotation: 0 });
+  expect(first.statusCode).toBe(200);
+  const result = asRecord(commandSuccessSchema.parse(first.json()).result);
+  expect(result).toMatchObject({ cost: 0, state: "ACTIVE" });
+  const removed = await command(session, "remove-building", { instanceId: String(result.instanceId) });
+  expect(removed.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(first.json()).delta.city?.placedCounts["B-001"]).toBe(1);
+  expect(commandSuccessSchema.parse(removed.json()).delta.city?.placedCounts["B-001"]).toBe(1);
+  const response = await app.inject({ method: "GET", url: "/v1/cities/current", headers: { authorization: session.authorization } });
+  const snapshot = snapshotSchema.parse(response.json());
+  expect(snapshot.buildings.some(b => b.definitionId === "B-001")).toBe(false);
+  expect(snapshot.city.placedCounts["B-001"]).toBe(1);
+  const cottage = BUILDINGS.find(b => b.id === "B-001");
+  if (!cottage) throw new Error("Missing cottage definition");
+  const catalogPrice = catalogAvailability(snapshot, cottage).cost;
+  expect(catalogPrice).toBe(180);
+  await handle.pool.query("update cities set coins = 100 where id = $1", [session.cityId]);
+  const payload = { definitionId: "B-001", x: 0, y: 4, rotation: 0 };
+  const broke = await command(session, "place-building", payload);
+  expect(broke.statusCode).toBe(409);
+  expect(apiErrorSchema.parse(broke.json()).error.code).toBe("INSUFFICIENT_COINS");
+  await handle.pool.query("update cities set coins = 500 where id = $1", [session.cityId]);
+  const replacement = await command(session, "place-building", payload);
+  expect(replacement.statusCode).toBe(200);
+  expect(commandSuccessSchema.parse(replacement.json()).result).toMatchObject({ cost: catalogPrice, state: "UNDER_CONSTRUCTION" });
 });
 
 test("US-002 settles rent for five ready cottages once", async () => {

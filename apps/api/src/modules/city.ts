@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, count, eq, isNull, ne } from "drizzle-orm";
 import { CONTENT_VERSION } from "@nf/shared";
 import type { Snapshot } from "@nf/shared/schemas";
 import type { Database } from "../db/client";
@@ -22,13 +22,14 @@ export async function loadCurrentCity(db: Database, cityId: string, now: Date): 
   if (city === undefined) {
     throw new ApiError(404, "NOT_FOUND", "City not found");
   }
-  const [cells, buildings, inventory, jobs, orders, trains, ownedFranchises, hostedFranchises, questRows] = await Promise.all([
+  const [cells, buildings, counts, inventory, jobs, orders, trains, ownedFranchises, hostedFranchises, questRows] = await Promise.all([
     db.select().from(cityCells).where(eq(cityCells.cityId, cityId)).orderBy(asc(cityCells.y), asc(cityCells.x)),
     db
       .select()
       .from(buildingInstances)
       .where(and(eq(buildingInstances.cityId, cityId), isNull(buildingInstances.removedAt)))
       .orderBy(asc(buildingInstances.id)),
+    db.select({ definitionId: buildingInstances.definitionId, count: count() }).from(buildingInstances).where(eq(buildingInstances.cityId, cityId)).groupBy(buildingInstances.definitionId),
     db.select().from(inventoryBalances).where(eq(inventoryBalances.cityId, cityId)).orderBy(asc(inventoryBalances.goodId)),
     db.select().from(productionJobs).where(eq(productionJobs.cityId, cityId)).orderBy(asc(productionJobs.slot)),
     db.select().from(orderInstances).where(eq(orderInstances.cityId, cityId)).orderBy(asc(orderInstances.slot)),
@@ -51,6 +52,7 @@ export async function loadCurrentCity(db: Database, cityId: string, now: Date): 
   });
   return presentSnapshot({
     city,
+    placedCounts: Object.fromEntries(counts.map(row => [row.definitionId, row.count])),
     cells,
     buildings,
     inventory,

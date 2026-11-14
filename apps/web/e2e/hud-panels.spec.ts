@@ -232,3 +232,32 @@ test("production and supply commands roll back after rejection", async ({ page }
   await expect(page.getByTestId("details-supply")).toBeVisible();
   await expect(page.getByTestId("building-details")).toContainText("State: NEEDS_SUPPLY");
 });
+
+test("catalog charges for a cottage after the first is removed", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  await page.evaluate(async () => {
+    const token = localStorage.getItem("nf_session_token");
+    const headers = { Authorization: `Bearer ${token}` };
+    const snapshot = await (await fetch("/v1/cities/current", { headers })).json() as { city: { cityId: string } };
+    const response = await fetch(`/v1/cities/${snapshot.city.cityId}/commands/place-building`, {
+      method: "POST", headers: { ...headers, "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+      body: JSON.stringify({ definitionId: "B-001", x: 0, y: 4, rotation: 0 }),
+    });
+    if (!response.ok) throw new Error(`Placement failed: ${response.status}`);
+  });
+  await page.reload();
+  await expect(page.getByTestId("scene-ready")).toHaveText("yes", { timeout: 20000 });
+  const world = gridToScreen(0.5, 4.5, MAP_ORIGIN_X, MAP_ORIGIN_Y);
+  await page.getByTestId("aim-x").fill(String(world.x));
+  await page.getByTestId("aim-y").fill(String(world.y));
+  await page.getByTestId("aim-go").click();
+  const box = await page.getByTestId("game-canvas").locator("canvas").boundingBox();
+  if (!box) throw new Error("Missing canvas");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.getByTestId("building-details")).toContainText("B-001");
+  await page.getByTestId("details-remove").click();
+  await expect(page.getByTestId("city-building").filter({ hasText: "B-001" })).toHaveCount(0);
+  await page.getByTestId("build-catalog-open").click();
+  await expect(page.getByTestId("catalog-item-B-001")).toContainText("180 coins");
+});
