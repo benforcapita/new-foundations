@@ -13,6 +13,7 @@ import {
   screenToGrid,
 } from "@nf/shared";
 import Phaser from "phaser";
+import { BENCH_SIZE, stressBuildings } from "../../../../tools/bench/scene";
 import { useCityStore, visibleSnapshot } from "../api/store";
 import { liveBuildings, livePlots, livePlacementCity, liveRoadTiles, decorationPreview } from "./liveCity";
 import { useSettings } from "../settings";
@@ -65,7 +66,7 @@ function placeAnchored(
   scale?: number,
 ): Phaser.GameObjects.Image {
   const meta = getAssetMeta(assetId);
-  const image = scene.add.image(0, 0, assetId);
+  const image = scene.add.image(0, 0, "nf-atlas", assetId).setData("assetId", assetId);
   const aspect = image.width === 0 ? 1 : image.height / image.width;
   const size = displaySize(footprintW, footprintH, scale ?? meta.displayScale, aspect);
   const anchor = anchorScreen(gridX, gridY, footprintW, footprintH);
@@ -187,6 +188,7 @@ export class IsoScene extends Phaser.Scene {
   private ghostFoot: Phaser.GameObjects.Graphics | null = null;
   private ghostStamp: number | null = null;
   private readonly opaqueRows = new Map<string, number>();
+  private cullKey = "";
 
   constructor() {
     super("iso");
@@ -212,6 +214,7 @@ export class IsoScene extends Phaser.Scene {
 
   public create(): void {
     this.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches || useSettings.getState().reducedMotion;
+    this.createAtlas();
     this.drawTerrain();
     const host = this.game.canvas.parentElement;
     if (host !== null) host.dataset.fxArcs = "0";
@@ -227,6 +230,7 @@ export class IsoScene extends Phaser.Scene {
     if (previousAim) { camera.setZoom(clampZoom(previousAim.zoom)); camera.centerOn(previousAim.x, previousAim.y); }
     else camera.centerOn(framed.x, framed.y);
     camera.roundPixels = true;
+    camera.disableCull = false;
     this.bindInput();
     this.game.events.on(Phaser.Core.Events.POST_RENDER, this.onPaint);
     window.addEventListener("nf-fx", this.onFeedback);
@@ -257,6 +261,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   public override update(time: number): void {
+    this.cullViewport();
     const crop = this.readyCrop;
     if (crop === null) {
       return;
@@ -270,7 +275,28 @@ export class IsoScene extends Phaser.Scene {
     }
   }
 
-  private isDemo(): boolean { return import.meta.env.VITE_DEMO_MODE === "1" || new URLSearchParams(window.location.search).get("demo") === "1"; }
+  private cullViewport(): void {
+    const camera = this.cameras.main;
+    const key = [camera.scrollX, camera.scrollY, camera.zoom, camera.width, camera.height].join(",");
+    if (key === this.cullKey) return;
+    this.cullKey = key;
+    const margin = 128;
+    const left = camera.scrollX + camera.width / 2 - camera.width / (2 * camera.zoom) - margin;
+    const top = camera.scrollY + camera.height / 2 - camera.height / (2 * camera.zoom) - margin;
+    const right = left + camera.width / camera.zoom + 2 * margin;
+    const bottom = top + camera.height / camera.zoom + 2 * margin;
+    for (const object of this.children.list) {
+      if (!(object instanceof Phaser.GameObjects.Image || object instanceof Phaser.GameObjects.RenderTexture)) continue;
+      if (object === this.ghostImage || object === this.ghostIcon) continue;
+      const bounds = object.getBounds();
+      if (bounds.right < left || bounds.left > right || bounds.bottom < top || bounds.top > bottom) camera.ignore(object);
+      else object.cameraFilter &= ~camera.id;
+    }
+  }
+
+  private isBench(): boolean { return new URLSearchParams(window.location.search).get("bench") === "1"; }
+
+  private isDemo(): boolean { return this.isBench() || import.meta.env.VITE_DEMO_MODE === "1" || new URLSearchParams(window.location.search).get("demo") === "1"; }
 
   private snapshot() {
     const snapshot = visibleSnapshot(useCityStore.getState());
@@ -286,27 +312,50 @@ export class IsoScene extends Phaser.Scene {
     return { ...city, coins: Number.MAX_SAFE_INTEGER, population: 0, populationCap: Number.MAX_SAFE_INTEGER };
   }
 
+  private createAtlas(): void {
+    const sources = bundledPngIds().map((id) => ({ id, source: this.textures.get(id).getSourceImage() as HTMLImageElement }));
+    const width = 4096;
+    let x = 0, y = 0, rowHeight = 0;
+    const frames = sources.map(({ id, source }) => {
+      if (x + source.width > width) { x = 0; y += rowHeight; rowHeight = 0; }
+      const frame = { id, source, x, y };
+      x += source.width;
+      rowHeight = Math.max(rowHeight, source.height);
+      return frame;
+    });
+    const atlas = this.textures.createCanvas("nf-atlas", width, y + rowHeight);
+    if (!atlas) throw new Error("Unable to create texture atlas");
+    for (const frame of frames) {
+      atlas.context.drawImage(frame.source, frame.x, frame.y);
+      atlas.add(frame.id, 0, frame.x, frame.y, frame.source.width, frame.source.height);
+    }
+    atlas.refresh();
+  }
+
   private drawTerrain(): void {
-    for (let y = 0; y < STARTER_MAP.height; y += 1) {
-      const row = STARTER_MAP.rows[y];
-      if (row === undefined) {
-        continue;
-      }
-      for (let x = 0; x < STARTER_MAP.width; x += 1) {
-        const terrain = row[x];
-        if (terrain === undefined) {
-          continue;
-        }
-        const tile = placeAnchored(this, TERRAIN_ASSETS[terrain], x, y, 1, 1, GROUND_DEPTH);
-        if (terrain === "water") {
-          this.water.push(tile);
+    // Cache each static 12×12 diamond in a single render texture. Water stays
+    // separate so the existing reduced-motion-aware shimmer can animate it.
+    const chunkSize = 12;
+    for (let cy = 0; cy < (this.isBench() ? BENCH_SIZE : STARTER_MAP.height); cy += chunkSize) {
+      for (let cx = 0; cx < (this.isBench() ? BENCH_SIZE : STARTER_MAP.width); cx += chunkSize) {
+        const left = anchorScreen(cx, cy + chunkSize, 0, 0).x - 64;
+        const top = anchorScreen(cx, cy, 0, 0).y - 128;
+        const chunk = this.add.renderTexture(left, top, 1664, 1024).setOrigin(0).setDepth(GROUND_DEPTH);
+        for (let y = cy; y < Math.min(cy + chunkSize, this.isBench() ? BENCH_SIZE : STARTER_MAP.height); y += 1) {
+          for (let x = cx; x < Math.min(cx + chunkSize, this.isBench() ? BENCH_SIZE : STARTER_MAP.width); x += 1) {
+            const terrain = this.isBench() ? "grass" : STARTER_MAP.rows[y]?.[x];
+            if (terrain === undefined) continue;
+            const tile = placeAnchored(this, TERRAIN_ASSETS[terrain], x, y, 1, 1, GROUND_DEPTH);
+            if (terrain === "water") this.water.push(tile);
+            else { chunk.draw(tile, tile.x - left, tile.y - top); tile.destroy(); }
+          }
         }
       }
     }
   }
 
   private drawRoads(): void {
-    const roads = this.isDemo() ? demoRoadTiles() : liveRoadTiles(this.snapshot());
+    const roads = this.isBench() ? [] : this.isDemo() ? demoRoadTiles() : liveRoadTiles(this.snapshot());
     if (this.game.canvas.parentElement) this.game.canvas.parentElement.dataset.roadTiles = JSON.stringify(roads.map(road => ({ x: road.x, y: road.y, assetId: road.sprite.assetId })));
     for (const road of roads) {
       const image = placeAnchored(this, road.sprite.assetId, road.x, road.y, 1, 1, ROAD_DEPTH);
@@ -316,7 +365,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private drawPlots(): void {
-    for (const plot of this.isDemo() ? demoPlots() : livePlots(this.snapshot())) {
+    for (const plot of this.isBench() ? [] : this.isDemo() ? demoPlots() : livePlots(this.snapshot())) {
       const definition = agricultureById(plot.plotId);
       const presentation = plotPresentation(plot.plotId);
       for (let dy = 0; dy < definition.footprint.height; dy += 1) {
@@ -382,7 +431,7 @@ export class IsoScene extends Phaser.Scene {
       const size = rotatedFootprint(decoration.footprint.width, decoration.footprint.height, building.rotation);
       placeAnchored(this, decoration.assetId, building.x, building.y, size.width, size.height, footprintDepth(building.x, building.y, size.width, size.height));
     }
-    for (const building of this.isDemo() ? demoBuildings() : liveBuildings(this.snapshot())) {
+    for (const building of this.isBench() ? stressBuildings() : this.isDemo() ? demoBuildings() : liveBuildings(this.snapshot())) {
       const definition = buildingById(building.buildingId);
       const footprint = rotatedFootprint(definition.footprint.width, definition.footprint.height, building.rotation);
       const depth = footprintDepth(building.x, building.y, footprint.width, footprint.height);
@@ -733,6 +782,16 @@ export class IsoScene extends Phaser.Scene {
   };
 
   private readonly onPaint = (): void => {
+    const benchHost = this.game.canvas.parentElement;
+    if (this.isBench() && benchHost && !benchHost.dataset.benchStats) {
+      benchHost.dataset.benchStats = JSON.stringify({
+        buildings: this.buildingSprites.length,
+        readyBadges: this.badges.length,
+        visibleBuildings: this.buildingSprites.filter((entry) => (entry.image.cameraFilter & this.cameras.main.id) === 0).length,
+        atlasBuildings: this.buildingSprites.filter((entry) => entry.image.texture.key === "nf-atlas").length,
+        terrainChunks: this.children.list.filter((entry) => entry instanceof Phaser.GameObjects.RenderTexture).length,
+      });
+    }
     if (new URLSearchParams(window.location.search).get("e2e") === "1" && this.game.canvas.parentElement) {
       const camera = this.cameras.main;
       const screenRect = (item: Phaser.GameObjects.Image | Phaser.GameObjects.Text | null) => {
@@ -754,6 +813,7 @@ export class IsoScene extends Phaser.Scene {
     const latencyMs = Math.max(0, Math.round(performance.now() - this.ghostStamp));
     this.ghostStamp = null;
     const ghost = useSceneStore.getState().ghost;
+    if (this.isBench() && ghost.active && this.game.canvas.parentElement) this.game.canvas.parentElement.dataset.placementLatency = String(latencyMs);
     useSceneStore.getState().publish({ ghost: { ...ghost, latencyMs } });
   };
 
@@ -795,7 +855,7 @@ export class IsoScene extends Phaser.Scene {
   }
 
   private artTop(image: Phaser.GameObjects.Image): number {
-    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, this.opaqueRow(image.texture.key));
+    return visibleArtTop(image.y, image.displayHeight, image.originY, image.height, this.opaqueRow(String(image.getData("assetId") ?? image.texture.key)));
   }
 
   private opaqueRow(key: string): number {
@@ -963,7 +1023,7 @@ export class IsoScene extends Phaser.Scene {
     return JSON.stringify(
       this.buildingSprites.map((entry) => ({
         id: entry.id,
-        assetId: entry.image.texture.key,
+        assetId: String(entry.image.getData("assetId") ?? entry.image.texture.key),
         x: entry.image.x,
         y: entry.image.y,
         displayWidth: entry.image.displayWidth,
@@ -991,7 +1051,7 @@ export class IsoScene extends Phaser.Scene {
       reducedMotion: this.reducedMotion,
       depthOrder: order,
       spriteFrames: this.spriteFramePayload(),
-      mapSize: `${STARTER_MAP.width}x${STARTER_MAP.height}`,
+      mapSize: this.isBench() ? "96x96" : `${STARTER_MAP.width}x${STARTER_MAP.height}`,
       zoom: this.cameras.main.zoom,
       lod: "detailed",
       districtList: false,

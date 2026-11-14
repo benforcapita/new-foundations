@@ -95,3 +95,11 @@ jobs:
 
       - name: Playwright smoke
         run: pnpm --filter @nf/web test:e2e
+
+      - name: Upload NF-20 benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nf20-benchmark
+          path: apps/web/test-results/**/nf20-benchmark.json
+          if-no-files-found: warn
