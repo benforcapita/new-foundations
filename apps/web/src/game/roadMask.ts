@@ -14,6 +14,7 @@ export type RoadSprite = {
     | "tile_road_cross";
   readonly flipX: boolean;
   readonly flipY: boolean;
+  readonly angle?: number;
 };
 
 const EAST_WEST = ROAD.east | ROAD.west;
@@ -54,15 +55,14 @@ function corner(mask: number): RoadSprite {
 
 /**
  * T art has an east-west bar and a north stem. flipY points the stem south.
- * A north-south bar is not in the placeholder sheet, so those junctions use the cross
- * and keep every real neighbor connected.
+ * A quarter-turn supplies the remaining two orientations.
  */
 function tee(mask: number): RoadSprite {
   const eastWestBar = (mask & ROAD.east) !== 0 && (mask & ROAD.west) !== 0;
   if (eastWestBar) {
     return { assetId: "tile_road_t", flipX: false, flipY: (mask & ROAD.north) === 0 };
   }
-  return { assetId: "tile_road_cross", flipX: false, flipY: false };
+  return { assetId: "tile_road_t", flipX: false, flipY: false, angle: (mask & ROAD.east) !== 0 ? 90 : -90 };
 }
 
 export function roadSpriteForMask(mask: number): RoadSprite {
