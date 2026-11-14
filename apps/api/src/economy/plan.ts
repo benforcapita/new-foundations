@@ -485,7 +485,7 @@ export function planCollect(world: World, command: { readonly instanceId?: strin
           building,
           goodId: building.outputReady.goodId,
           qty: building.outputReady.qty,
-          readyAt: building.constructionCompletesAt ?? building.createdAt,
+          readyAt: building.outputReady.readyAt ?? building.constructionCompletesAt ?? building.createdAt,
           quest: questGoods.has(building.outputReady.goodId),
         },
       ];
@@ -559,7 +559,7 @@ export function planCollect(world: World, command: { readonly instanceId?: strin
       const goodId = next.outputReady.goodId;
       const left = next.outputReady.qty - got;
       const output = next as { outputReady: WorldBuilding["outputReady"]; state: WorldBuilding["state"]; cycleStartedAt: number | null; constructionCompletesAt: number | null };
-      output.outputReady = left > 0 ? { goodId, qty: left } : null;
+      output.outputReady = left > 0 ? { ...next.outputReady, qty: left } : null;
       ledger.push({
         resource: goodId,
         delta: got,
@@ -650,7 +650,7 @@ function planUndoRemove(world: World, building: WorldBuilding): Plan {
 }
 
 function questGoodIds(world: World): Set<string> {
-  const ids = new Set<string>();
+  const ids = new Set<string>(world.orderGoods ?? []);
   for (const quest of world.quests) {
     if (quest.status !== "ACTIVE") {
       continue;

@@ -44,6 +44,7 @@ export type WorldBuilding = {
   readonly rotation: QuarterTurns;
   readonly state: BuildingState;
   readonly constructionCompletesAt: number | null;
+  readonly upgradeCompletesAt?: number | null;
   readonly cycleStartedAt: number | null;
   readonly lastCollectedAt: number | null;
   readonly stock: BuildingStock;
@@ -81,6 +82,7 @@ export type World = {
   readonly jobs: readonly WorldJob[];
   readonly balances: Readonly<Record<string, number>>;
   readonly quests: readonly WorldQuest[];
+  readonly orderGoods?: readonly string[];
 };
 
 export function cloneBuilding(building: WorldBuilding): WorldBuilding {

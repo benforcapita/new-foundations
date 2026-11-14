@@ -36,7 +36,8 @@ export const useCityStore = create<State>((set, get) => ({
         const command = get().queue[0];
         if (!command) break;
         try {
-          await api.command(session.token, session.cityId, command.name, command.body, command.key);
+          const response = await api.command(session.token, session.cityId, command.name, command.body, command.key);
+          if (command.name === "collect-all" && typeof response.result === "object" && response.result !== null && "warehouseFull" in response.result && response.result.warehouseFull === true) window.dispatchEvent(new CustomEvent("nf-warehouse-full", { detail: response.result }));
           if (command.name === "reroll-order") localStorage.setItem(`nf_reroll:${session.cityId}`, String(Date.now() + 900_000));
           const snapshot = await api.snapshot(session.token, session.cityId);
           const queue = get().queue.filter((item) => item.key !== command.key);

@@ -167,8 +167,9 @@ export async function runCommand(
     };
 
     let effects: CommandEffects;
+    let timerPopulation: { population: number; populationCap: number } | undefined;
     try {
-      await resolveStoredTimers(tx, input.cityId, input.now, versionAfter);
+      timerPopulation = await resolveStoredTimers(tx, input.cityId, input.now, versionAfter);
       effects = await input.apply(ctx);
     } catch (error) {
       if (error instanceof ApiError) {
@@ -225,8 +226,8 @@ export async function runCommand(
     }
 
     const nextLevel = levelForXp(cityBalances.xp);
-    const population = effects.cityPatch?.population ?? city.population;
-    const populationCap = effects.cityPatch?.populationCap ?? city.populationCap;
+    const population = effects.cityPatch?.population ?? timerPopulation?.population ?? city.population;
+    const populationCap = effects.cityPatch?.populationCap ?? timerPopulation?.populationCap ?? city.populationCap;
     await tx
       .update(cities)
       .set({
@@ -268,12 +269,14 @@ export async function runCommand(
             .from(inventoryBalances)
             .where(and(eq(inventoryBalances.cityId, input.cityId), inArray(inventoryBalances.goodId, touched)));
 
+    const [currentCity] = await tx.select().from(cities).where(eq(cities.id, input.cityId));
+    if (!currentCity) throw new ApiError(404, "NOT_FOUND", "City not found");
     const body = commandSuccessSchema.parse({
       result: effects.result ?? {},
       delta: await readChangedDelta(
         tx,
         {
-          ...city,
+          ...currentCity,
           coins: cityBalances.coins,
           xp: cityBalances.xp,
           gems: cityBalances.gems,
@@ -286,7 +289,7 @@ export async function runCommand(
         deltaFrom,
         versionAfter,
         presentInventory(balances),
-        stale || cityResourcesTouched || effects.cityPatch !== undefined,
+        stale || cityResourcesTouched || effects.cityPatch !== undefined || timerPopulation !== undefined || currentCity.warehouseTier !== city.warehouseTier || currentCity.collectPriority !== city.collectPriority,
       ),
       cityVersion: versionAfter,
     });
